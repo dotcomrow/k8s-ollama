@@ -1,0 +1,194 @@
+# Create the "ollama" namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models-pvc
+  namespace: ollama
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 80Gi
+  storageClassName: nfs-client
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-webui-data
+  namespace: ollama
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: nfs-client
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: ollama
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      runtimeClassName: nvidia
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          securityContext:
+            capabilities:
+              add: ["SYS_ADMIN"]
+          env:
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "1"
+            - name: OLLAMA_NUM_PARALLEL
+              value: "2"
+            - name: OLLAMA_THREADS
+              value: "12"
+            - name: OLLAMA_TIMEOUT
+              value: "1200"
+            - name: OLLAMA_GPU_MEMORY
+              value: "0"
+            - name: OLLAMA_FLASH_ATTENTION
+              value: "true"
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              echo "Resetting GPU..."
+              nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
+              (
+                echo "Waiting for Ollama to be ready..."
+                until ollama list >/dev/null 2>&1; do
+                  echo "Waiting..."; sleep 1;
+                done
+                echo "Warming up model..."
+                ollama run codellama:13b-instruct-Q6_K
+                echo "Model is ready."
+              ) &
+              exec ollama serve
+          ports:
+            - containerPort: 11434
+          resources:
+            requests:
+              cpu: "500m"        # Idle baseline - allows the pod to run with minimal footprint
+              memory: "4Gi"      # Enough for Ollama to start but not excessive
+              nvidia.com/gpu.shared: 1
+            limits:
+              cpu: "12000m"      # Full access to 12 cores when needed
+              memory: "36Gi"     # Same as before - memory usage often spikes for LLM inference
+              nvidia.com/gpu.shared: 1
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: ollama-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - protocol: TCP
+      port: 11434
+      targetPort: 11434
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  namespace: ollama
+  labels:
+    app: open-webui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-webui
+  template:
+    metadata:
+      labels:
+        app: open-webui
+    spec:
+      containers:
+        - name: open-webui
+          image: ghcr.io/open-webui/open-webui:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://ollama.ollama.svc.cluster.local:11434"
+            - name: OLLAMA_API_TIMEOUT
+              value: "300"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: webui-data
+              mountPath: /app/backend/data
+      volumes:
+        - name: webui-data
+          persistentVolumeClaim:
+            claimName: open-webui-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  namespace: ollama
+spec:
+  selector:
+    app: open-webui
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: open-webui-route
+  namespace: ollama
+  annotations:
+    apisix.apache.org/timeout: "900"
+    apisix.apache.org/websocket: "true"
+spec:
+  http:
+    - name: webui
+      websocket: true
+      match:
+        hosts:
+          - ai.app.suncoast.systems
+        paths:
+          - /*
+      backends:
+        - serviceName: open-webui
+          servicePort: 80
