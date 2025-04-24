@@ -93,8 +93,8 @@ spec:
               memory: "4Gi"      # Enough for Ollama to start but not excessive
               nvidia.com/gpu.shared: 1
             limits:
-              cpu: "12000m"      # Full access to 12 cores when needed
-              memory: "36Gi"     # Same as before - memory usage often spikes for LLM inference
+              cpu: "2000m"      # Full access to 12 cores when needed
+              memory: "12Gi"     # Same as before - memory usage often spikes for LLM inference
               nvidia.com/gpu.shared: 1
           volumeMounts:
             - name: ollama-data
