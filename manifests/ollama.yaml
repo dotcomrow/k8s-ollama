@@ -73,6 +73,8 @@ spec:
               value: "4096"
             - name: OLLAMA_BATCH_SIZE
               value: "256"
+            - name: OLLAMA_N_GPU_LAYERS
+              value: "41"
           command: ["/bin/sh"]
           args:
             - -c
