@@ -62,7 +62,7 @@ spec:
             - name: OLLAMA_NUM_PARALLEL
               value: "2"
             - name: OLLAMA_THREADS
-              value: "12"
+              value: "6"
             - name: OLLAMA_TIMEOUT
               value: "1200"
             - name: OLLAMA_GPU_MEMORY
@@ -89,8 +89,8 @@ spec:
             - containerPort: 11434
           resources:
             requests:
-              cpu: "500m"        # Idle baseline - allows the pod to run with minimal footprint
-              memory: "4Gi"      # Enough for Ollama to start but not excessive
+              cpu: "6000m"        # Idle baseline - allows the pod to run with minimal footprint
+              memory: "8Gi"      # Enough for Ollama to start but not excessive
               nvidia.com/gpu.shared: 1
             limits:
               cpu: "12000m"      # Full access to 8 cores when needed
