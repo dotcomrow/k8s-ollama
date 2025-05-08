@@ -73,8 +73,6 @@ spec:
               value: "4096"
             - name: OLLAMA_BATCH_SIZE
               value: "256"
-            - name: OLLAMA_N_GPU_LAYERS
-              value: "41"
           command: ["/bin/sh"]
           args:
             - -c
@@ -90,7 +88,7 @@ spec:
                 ollama run codellama:13b-instruct-Q6_K
                 echo "Model is ready."
               ) &
-              exec ollama serve
+              exec ollama serve --n-gpu-layers 41
           ports:
             - containerPort: 11434
           resources:
