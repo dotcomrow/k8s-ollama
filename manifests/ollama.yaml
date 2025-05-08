@@ -66,9 +66,13 @@ spec:
             - name: OLLAMA_TIMEOUT
               value: "1200"
             - name: OLLAMA_GPU_MEMORY
-              value: "15360"
+              value: "14500"
             - name: OLLAMA_FLASH_ATTENTION
               value: "true"
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: "4096"
+            - name: OLLAMA_BATCH_SIZE
+              value: "256"
           command: ["/bin/sh"]
           args:
             - -c
