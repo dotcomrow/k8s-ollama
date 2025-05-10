@@ -88,7 +88,7 @@ spec:
                 ollama run codellama:13b-instruct-Q6_K
                 echo "Model is ready."
               ) &
-              exec ollama serve --n-gpu-layers 41
+              exec ollama serve
           ports:
             - containerPort: 11434
           resources:
