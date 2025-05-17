@@ -50,6 +50,18 @@ spec:
         app: ollama
     spec:
       runtimeClassName: nvidia
+      initContainers:
+        - name: wait-for-nfs
+          image: busybox
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for DNS and NFS port..."
+              until nslookup nfs-server.nfs-system.svc.cluster.local && nc -z nfs-server.nfs-system.svc.cluster.local 2049; do
+                echo "Still waiting for NFS server..."
+                sleep 2
+              done
       containers:
         - name: ollama
           image: ollama/ollama:latest
