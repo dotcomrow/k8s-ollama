@@ -5,6 +5,8 @@ metadata:
   name: ollama
   labels:
     app: ollama
+  annotations:
+    linkerd.io/inject: enabled
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
