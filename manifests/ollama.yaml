@@ -121,7 +121,8 @@ spec:
   selector:
     app: ollama
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 11434
       targetPort: 11434
   clusterIP: None
@@ -177,7 +178,8 @@ spec:
   selector:
     app: open-webui
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8080
 ---
 apiVersion: apisix.apache.org/v2
