@@ -9,7 +9,7 @@ metadata:
     linkerd.io/inject: enabled
     field.cattle.io/projectId: local:applications
     scheduler.alpha.kubernetes.io/node-selector: "dedicated=work-node"
-    config.linkerd.io/trace-collector: collector.linkerd-jaeger.linkerd-jaeger.svc.cluster.local.:4317
+    config.linkerd.io/trace-collector: collector.linkerd-jaeger.svc.cluster.local.:4317
     config.linkerd.io/trace-collector-sample-rate: "1.0"
 ---
 apiVersion: v1
