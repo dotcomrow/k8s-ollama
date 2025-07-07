@@ -66,15 +66,15 @@ spec:
             - name: OLLAMA_NUM_PARALLEL
               value: "2"
             - name: OLLAMA_THREADS
-              value: "6"
+              value: "8"
             - name: OLLAMA_TIMEOUT
               value: "1200"
             - name: OLLAMA_GPU_MEMORY
-              value: "14500"
+              value: "15000"
             - name: OLLAMA_FLASH_ATTENTION
               value: "true"
             - name: OLLAMA_CONTEXT_LENGTH
-              value: "4096"
+              value: "8192"
             - name: OLLAMA_BATCH_SIZE
               value: "256"
           command: ["/bin/sh"]
@@ -85,7 +85,6 @@ spec:
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
 
               export OLLAMA_NO_CPU_OFFLOAD=1
-              export OLLAMA_NO_CACHE=1
               (
                 echo "Waiting for Ollama to be ready..."
                 until ollama list >/dev/null 2>&1; do
@@ -93,7 +92,7 @@ spec:
                 done
                 echo "Warming up model..."
                 # ollama run codellama:13b-instruct-Q6_K
-                ollama run mistral:latest --num-ctx 8192
+                ollama run mistral:latest
                 echo "Model is ready."
               ) &
               exec ollama serve
