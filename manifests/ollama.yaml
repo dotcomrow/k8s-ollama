@@ -83,13 +83,17 @@ spec:
             - |
               echo "Resetting GPU..."
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
+
+              export OLLAMA_NO_CPU_OFFLOAD=1
+              export OLLAMA_NO_CACHE=1
               (
                 echo "Waiting for Ollama to be ready..."
                 until ollama list >/dev/null 2>&1; do
                   echo "Waiting..."; sleep 1;
                 done
                 echo "Warming up model..."
-                ollama run codellama:13b-instruct-Q6_K
+                # ollama run codellama:13b-instruct-Q6_K
+                ollama run mistral:latest --num-ctx 8192
                 echo "Model is ready."
               ) &
               exec ollama serve
