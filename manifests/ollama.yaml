@@ -195,6 +195,7 @@ metadata:
     apisix.apache.org/timeout: "900"
     apisix.apache.org/websocket: "true"
 spec:
+  ingressClassName: apisix
   http:
     - name: webui
       websocket: true
