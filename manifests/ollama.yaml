@@ -66,17 +66,17 @@ spec:
             - name: OLLAMA_NUM_PARALLEL
               value: "2"
             - name: OLLAMA_THREADS
-              value: "8"
+              value: "12"
             - name: OLLAMA_TIMEOUT
               value: "1200"
             - name: OLLAMA_GPU_MEMORY
-              value: "15000"
+              value: "15500"
             - name: OLLAMA_FLASH_ATTENTION
               value: "true"
             - name: OLLAMA_CONTEXT_LENGTH
               value: "8192"
             - name: OLLAMA_BATCH_SIZE
-              value: "256"
+              value: "512"
           command: ["/bin/sh"]
           args:
             - -c
