@@ -96,9 +96,9 @@ spec:
               echo "Resetting GPU..."
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
 
-              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
               MODEL_FILE="/opt/ollama-models/models.txt"
-
+              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
+              echo "Default model: $DEFAULT_MODEL"
               export OLLAMA_NO_CPU_OFFLOAD=1
               (
                 echo "Waiting for Ollama to be ready..."
