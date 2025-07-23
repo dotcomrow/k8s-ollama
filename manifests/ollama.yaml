@@ -36,6 +36,18 @@ spec:
       storage: 20Gi
   storageClassName: nfs-client
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ollama-models
+  namespace: ollama
+data:
+  models.txt: |
+    # default: deepseek-r1:14b
+    deepseek-r1:14b
+    codellama:13b-instruct
+    llama3:8b-instruct
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -84,16 +96,28 @@ spec:
               echo "Resetting GPU..."
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
 
+              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
+              MODEL_FILE="/opt/ollama-models/models.txt"
+
               export OLLAMA_NO_CPU_OFFLOAD=1
               (
                 echo "Waiting for Ollama to be ready..."
                 until ollama list >/dev/null 2>&1; do
                   echo "Waiting..."; sleep 1;
                 done
-                echo "Warming up model..."
-                # ollama run codellama:13b-instruct-Q6_K
-                ollama run mistral:latest
-                echo "Model is ready."
+
+                echo "Loading models listed in $MODEL_FILE..."
+                while IFS= read -r model; do
+                  if [ -n "$model" ]; then
+                    echo "Warming up model: $model"
+                    ollama run "$model"
+                  fi
+                done < "$MODEL_FILE"
+
+                echo "All models warmed. Starting Ollama server."
+                ollama run $DEFAULT_MODEL
+                echo "Models are ready."
+                echo "Default model is: $DEFAULT_MODEL"
               ) &
               exec ollama serve
           ports:
@@ -110,10 +134,42 @@ spec:
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama
+            - name: model-list
+              mountPath: /opt/ollama-models
+              readOnly: true
+
+        - name: keep-warm
+          image: alpine:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              apk add --no-cache wget >/dev/null 2>&1
+              MODEL_FILE="/opt/ollama-models/models.txt"
+              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
+
+              echo "Keep-warm default model: $DEFAULT_MODEL"
+
+              while true; do
+                wget -qO- --header="Content-Type: application/json" \
+                  --post-data="{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" \
+                  http://localhost:11434/api/generate >/dev/null
+                sleep 120
+              done
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+
       volumes:
         - name: ollama-data
           persistentVolumeClaim:
             claimName: ollama-models-pvc
+        - name: model-list
+          configMap:
+            name: ollama-models
 ---
 apiVersion: v1
 kind: Service
