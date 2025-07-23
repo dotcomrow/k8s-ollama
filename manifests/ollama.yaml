@@ -151,6 +151,7 @@ spec:
               echo "Keep-warm default model: $DEFAULT_MODEL"
 
               while true; do
+                echo "Keeping model $DEFAULT_MODEL warm..."
                 wget -qO- --header="Content-Type: application/json" \
                   --post-data="{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" \
                   http://localhost:11434/api/generate >/dev/null
