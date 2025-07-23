@@ -122,7 +122,7 @@ spec:
                 echo "Loading models listed in $MODEL_FILE..."
                 while IFS= read -r model; do
                   # Skip comments and blank lines
-                  if [ -n "$model" ] && [ "${model:0:1}" != "#" ]; then
+                  if [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ]; then
                     echo "Warming up model: $model"
                     ollama run "$model"
                   fi
