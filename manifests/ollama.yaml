@@ -45,7 +45,7 @@ type: Opaque
 stringData:
   PGUSER: "<path:secret/data/ollama-yugabyte-username#value>"
   PGPASSWORD: "<path:secret/data/ollama-yugabyte-password#value>"
-  PGHOST: yugabyte.yugabyte.svc.cluster.local
+  PGHOST: yb-tserver-service.yugabyte.svc.cluster.local
   PGPORT: "5433"
   PGDATABASE: openwebui
 ---
