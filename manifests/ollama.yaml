@@ -37,6 +37,19 @@ spec:
   storageClassName: nfs-client
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: open-webui-db-secret
+  namespace: ollama
+type: Opaque
+stringData:
+  PGUSER: "<path:secret/data/ollama-yugabyte-username#value>"
+  PGPASSWORD: "<path:secret/data/ollama-yugabyte-password#value>"
+  PGHOST: yugabyte.yugabyte.svc.cluster.local
+  PGPORT: "5433"
+  PGDATABASE: openwebui
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ollama-models
@@ -220,6 +233,38 @@ spec:
               value: "http://ollama.ollama.svc.cluster.local:11434"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-db-secret
+                  key: PGUSER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-db-secret
+                  key: PGPASSWORD
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-db-secret
+                  key: PGHOST
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-db-secret
+                  key: PGPORT
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-db-secret
+                  key: PGDATABASE
+          command: ["/bin/sh"]
+          args:
+          - -c
+          - |
+            export DATABASE_URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+            echo "Starting with DATABASE_URL=$DATABASE_URL"
+            exec /app/backend/start.sh
           resources:
             requests:
               cpu: "500m"
