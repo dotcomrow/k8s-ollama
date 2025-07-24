@@ -92,10 +92,10 @@ spec:
               echo "🔐 Using root token from Secret..."
 
               vault policy write openwebui-db-policy - <<EOF
-              path "secret/data/ollama-yugabyte-username" {
+              path "secret/data/openwebui-yugabyte-username" {
                 capabilities = ["read"]
               }
-              path "secret/data/ollama-yugabyte-password" {
+              path "secret/data/openwebui-yugabyte-password" {
                 capabilities = ["read"]
               }
               EOF
