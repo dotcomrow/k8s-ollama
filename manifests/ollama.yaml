@@ -62,6 +62,47 @@ data:
     llama3:8b-instruct
 ---
 apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: create-vaultadmin-user
+            namespace: vault
+          spec:
+            backoffLimit: 1
+            template:
+              spec:
+                restartPolicy: Never
+                serviceAccountName: default  # Use appropriate SA if needed
+                volumes:
+                  - name: vault-bin
+                    emptyDir: {}
+                  - name: shared-creds
+                    persistentVolumeClaim:
+                      claimName: vault-creds-pvc
+
+                initContainers:
+                  - name: inject-vault
+                    image: hashicorp/vault:1.15.4  # or your version
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - cp /bin/vault /vault-bin/vault && chmod +x /vault-bin/vault
+                    volumeMounts:
+                      - name: vault-bin
+                        mountPath: /vault-bin
+
+                containers:
+                  - name: create-user
+                    image: yugabytedb/yugabyte:latest
+                    command: ["/bin/bash", "-c"]
+                    args:
+                      - |
+                        
+                    volumeMounts:
+                      - name: vault-bin
+                        mountPath: /vault-bin
+                      - name: shared-creds
+                        mountPath: /shared-creds
+---
+apiVersion: batch/v1
 kind: Job
 metadata:
   name: create-openwebui-vault-role
@@ -89,7 +130,14 @@ spec:
               VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
               export VAULT_TOKEN
 
-              echo "🔐 Using root token from Secret..."
+              echo "📌 Creating 'vaultadmin' role in Yugabyte..."
+              STRONG_PWD="$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 24)"
+              echo "Generating Yugabyte Vault admin account password as \$STRONG_PWD"
+
+              ysqlsh -h yb-tserver-service.yugabyte.svc.cluster.local -p 5433 -U yugabyte -d yugabyte <<EOF
+              CREATE ROLE vaultadmin WITH LOGIN PASSWORD '$STRONG_PWD';
+              GRANT ALL PRIVILEGES ON DATABASE yugabyte TO vaultadmin;
+              EOF
 
               vault policy write openwebui-db-policy - <<EOF
               path "secret/data/openwebui-yugabyte-username" {
