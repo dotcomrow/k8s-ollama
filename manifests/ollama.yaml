@@ -62,47 +62,6 @@ data:
     llama3:8b-instruct
 ---
 apiVersion: batch/v1
-          kind: Job
-          metadata:
-            name: create-vaultadmin-user
-            namespace: vault
-          spec:
-            backoffLimit: 1
-            template:
-              spec:
-                restartPolicy: Never
-                serviceAccountName: default  # Use appropriate SA if needed
-                volumes:
-                  - name: vault-bin
-                    emptyDir: {}
-                  - name: shared-creds
-                    persistentVolumeClaim:
-                      claimName: vault-creds-pvc
-
-                initContainers:
-                  - name: inject-vault
-                    image: hashicorp/vault:1.15.4  # or your version
-                    command: ["/bin/sh", "-c"]
-                    args:
-                      - cp /bin/vault /vault-bin/vault && chmod +x /vault-bin/vault
-                    volumeMounts:
-                      - name: vault-bin
-                        mountPath: /vault-bin
-
-                containers:
-                  - name: create-user
-                    image: yugabytedb/yugabyte:latest
-                    command: ["/bin/bash", "-c"]
-                    args:
-                      - |
-                        
-                    volumeMounts:
-                      - name: vault-bin
-                        mountPath: /vault-bin
-                      - name: shared-creds
-                        mountPath: /shared-creds
----
-apiVersion: batch/v1
 kind: Job
 metadata:
   name: create-openwebui-vault-role
