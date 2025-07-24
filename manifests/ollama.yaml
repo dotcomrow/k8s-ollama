@@ -350,6 +350,8 @@ spec:
                 sleep 60
               done
               echo "⏳ Creating YugabyteDB credentials from Vault..."
+              apk add --no-cache curl jq
+
               curl -s --request POST \
                 --data '{"jwt": "'"$VAULT_TOKEN"'", "role": "openwebui"}' \
                 $VAULT_ADDR/v1/auth/kubernetes/login > /tmp/vault-login.json
