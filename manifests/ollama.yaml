@@ -339,7 +339,7 @@ spec:
             - |
               echo "🔄 Waiting for Vault role 'openwebui' to exist..."
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
               while true; do
                 if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
                   echo "✅ Vault role is ready."
