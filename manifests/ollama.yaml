@@ -85,7 +85,18 @@ spec:
               echo "📌 Creating Vault role for openwebui..."
               ls -al /shared-creds
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-              export VAULT_TOKEN=$(grep '"root_token"' /shared-creds/init.json | sed 's/.*: "\(.*\)".*/\1/')
+              
+              # Read AppRole credentials from PVC
+              ROLE_ID=$(cat /shared-creds/role_id.txt)
+              SECRET_ID=$(cat /shared-creds/secret_id.txt)
+
+              # Authenticate with Vault using AppRole
+              echo "🔐 Authenticating via AppRole..."
+              LOGIN_JSON=$(vault write -format=json auth/approle/login role_id="$ROLE_ID" secret_id="$SECRET_ID")
+
+              # Extract token
+              VAULT_TOKEN=$(echo "$LOGIN_JSON" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+              export VAULT_TOKEN
 
               vault policy write openwebui-db-policy - <<EOF
               path "secret/data/ollama-yugabyte-username" {
