@@ -78,26 +78,25 @@ spec:
 
               echo "✅ YugabyteDB is available."
 
-              echo "📌 Creating Vault role for openwebui..."
+              echo "📌 Creating Vault policy and role for openwebui..."
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
 
-              # Read Vault root token from mounted secret
-              VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-              export VAULT_TOKEN
-
-              vault policy write openwebui-db-policy - <<EOF
-              path "secret/data/openwebui-yugabyte-username" {
-                capabilities = ["read"]
-              }
-              path "secret/data/openwebui-yugabyte-password" {
+              # Write the policy to a file
+              cat <<EOF > openwebui-policy.hcl
+              path "yugabyte-db/creds/openwebui" {
                 capabilities = ["read"]
               }
               EOF
 
+              # Upload the policy to Vault
+              vault policy write openwebui openwebui-policy.hcl
+
+              # Create the role
               vault write auth/kubernetes/role/openwebui \
                 bound_service_account_names=openwebui \
                 bound_service_account_namespaces=ollama \
-                policies=openwebui-db-policy \
+                policies=openwebui \
                 ttl=1h
           volumeMounts:
             - name: root-token
