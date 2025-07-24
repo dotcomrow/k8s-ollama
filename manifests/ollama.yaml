@@ -381,7 +381,7 @@ spec:
           - -c
           - |
             echo "📌 Loading database credentials from Vault..."
-            source /shared/db.env
+            . /shared/db.env
             echo "Using DATABASE_URL=$DATABASE_URL"
 
             echo "⏳ Waiting for YugabyteDB to accept connections on DATABASE_URL..."
