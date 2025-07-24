@@ -344,7 +344,6 @@ spec:
               while true; do
                 if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
                   echo "✅ Vault role is ready."
-                  exit 0
                 fi
                 echo "⏳ Still waiting..."
                 sleep 60
