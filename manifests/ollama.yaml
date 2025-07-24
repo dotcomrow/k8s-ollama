@@ -83,6 +83,7 @@ spec:
           args:
             - |
               echo "📌 Creating Vault role for openwebui..."
+              ls -al /shared-creds
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
               export VAULT_TOKEN=$(grep '"root_token"' /shared-creds/init.json | sed 's/.*: "\(.*\)".*/\1/')
 
