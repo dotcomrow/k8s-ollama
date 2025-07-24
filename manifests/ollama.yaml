@@ -37,19 +37,6 @@ spec:
   storageClassName: nfs-client
 ---
 apiVersion: v1
-kind: Secret
-metadata:
-  name: open-webui-db-secret
-  namespace: ollama
-type: Opaque
-stringData:
-  PGUSER: "<path:secret/data/ollama-yugabyte-username#value>"
-  PGPASSWORD: "<path:secret/data/ollama-yugabyte-password#value>"
-  PGHOST: yb-tserver-service.yugabyte.svc.cluster.local
-  PGPORT: "5433"
-  PGDATABASE: openwebui
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ollama-models
@@ -362,10 +349,22 @@ spec:
                 echo "⏳ Still waiting..."
                 sleep 60
               done
+
+              curl -s --request POST \
+                --data '{"jwt": "'"$VAULT_TOKEN"'", "role": "openwebui"}' \
+                $VAULT_ADDR/v1/auth/kubernetes/login > /tmp/vault-login.json
+
+              LOGIN_TOKEN=$(jq -r .auth.client_token /tmp/vault-login.json)
+
+              curl -s --header "X-Vault-Token: $LOGIN_TOKEN" \
+                  $VAULT_ADDR/v1/yugabyte-db/creds/openwebui \
+                  | jq -r '.data | "DATABASE_URL=postgresql://\(.username):\(.password)@yb-tserver-service.yugabyte.svc.cluster.local:5433/\(.username)"' > /shared/db.env
           volumeMounts:
             - name: vault-token
               mountPath: /vault-token
               readOnly: true
+            - name: shared
+              mountPath: /shared
 
       containers:
         - name: open-webui
@@ -377,31 +376,6 @@ spec:
               value: "http://ollama.ollama.svc.cluster.local:11434"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
-            - name: PGUSER
-              valueFrom:
-                secretKeyRef:
-                  name: open-webui-db-secret
-                  key: PGUSER
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: open-webui-db-secret
-                  key: PGPASSWORD
-            - name: PGHOST
-              valueFrom:
-                secretKeyRef:
-                  name: open-webui-db-secret
-                  key: PGHOST
-            - name: PGPORT
-              valueFrom:
-                secretKeyRef:
-                  name: open-webui-db-secret
-                  key: PGPORT
-            - name: PGDATABASE
-              valueFrom:
-                secretKeyRef:
-                  name: open-webui-db-secret
-                  key: PGDATABASE
           command: ["/bin/sh"]
           args:
           - -c
@@ -414,9 +388,9 @@ spec:
             done
 
             echo "✅ YugabyteDB is available."
-
-            export DATABASE_URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
-            echo "Starting with DATABASE_URL=$DATABASE_URL"
+            echo "📌 Loading database credentials from Vault..."
+            source /shared/db.env
+            echo "Using DATABASE_URL=$DATABASE_URL"
             exec /app/backend/start.sh
           resources:
             requests:
@@ -428,6 +402,8 @@ spec:
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
+            - name: shared
+              mountPath: /shared
       volumes:
         - name: webui-data
           persistentVolumeClaim:
@@ -435,6 +411,8 @@ spec:
         - name: vault-token
           secret:
             secretName: vault-root-token
+        - name: shared
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
