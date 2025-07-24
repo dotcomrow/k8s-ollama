@@ -380,17 +380,18 @@ spec:
           args:
           - -c
           - |
-            echo "⏳ Waiting for YugabyteDB to be ready at ${PGHOST}:${PGPORT}..."
-            while true; do
-              nc -z -w 1 "${PGHOST}" "${PGPORT}" >/dev/null 2>&1 && break
+            echo "📌 Loading database credentials from Vault..."
+            source /shared/db.env
+            echo "Using DATABASE_URL=$DATABASE_URL"
+
+            echo "⏳ Waiting for YugabyteDB to accept connections on DATABASE_URL..."
+            while ! PGPASSWORD=$(echo "$DATABASE_URL" | sed -n 's/.*:\/\/[^:]*:\([^@]*\)@.*/\1/p') \
+                  psql "$DATABASE_URL" -c '\q' 2>/dev/null; do
               echo "🔄 Still waiting for Yugabyte..."
               sleep 5
             done
 
             echo "✅ YugabyteDB is available."
-            echo "📌 Loading database credentials from Vault..."
-            source /shared/db.env
-            echo "Using DATABASE_URL=$DATABASE_URL"
             exec /app/backend/start.sh
           resources:
             requests:
