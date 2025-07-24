@@ -73,9 +73,9 @@ spec:
       restartPolicy: Never
       serviceAccountName: default
       volumes:
-        - name: shared-creds
-          persistentVolumeClaim:
-            claimName: vault-creds-pvc
+        - name: root-token
+          secret:
+            secretName: vault-root-token
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
@@ -85,11 +85,11 @@ spec:
               echo "📌 Creating Vault role for openwebui..."
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
 
-              # Read Vault root token directly from PVC
-              VAULT_TOKEN=$(cat /shared-creds/root_token.txt)
+              # Read Vault root token from mounted secret
+              VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
               export VAULT_TOKEN
 
-              echo "🔐 Using root token from shared-creds volume..."
+              echo "🔐 Using root token from Secret..."
 
               vault policy write openwebui-db-policy - <<EOF
               path "secret/data/ollama-yugabyte-username" {
@@ -105,6 +105,10 @@ spec:
                 bound_service_account_namespaces=ollama \
                 policies=openwebui-db-policy \
                 ttl=1h
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
           resources:
             requests:
               cpu: "50m"
@@ -112,9 +116,6 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
-          volumeMounts:
-            - name: shared-creds
-              mountPath: /shared-creds
 ---
 apiVersion: batch/v1
 kind: Job
