@@ -158,11 +158,6 @@ spec:
               mountPath: /vault-token
               readOnly: true
 
-      volumes:
-        - name: vault-token
-          secret:
-            secretName: vault-root-token
-
       containers:
         - name: ollama
           image: ollama/ollama:latest
@@ -274,9 +269,9 @@ spec:
         - name: model-list
           configMap:
             name: ollama-models
-        - name: vault-creds
-          persistentVolumeClaim:
-            claimName: vault-creds-pvc
+        - name: vault-token
+          secret:
+            secretName: vault-root-token
 ---
 apiVersion: v1
 kind: Service
