@@ -332,6 +332,7 @@ spec:
       labels:
         app: open-webui
     spec:
+      serviceAccountName: openwebui
       initContainers:
         - name: wait-for-vault-role
           image: hashicorp/vault:1.15.4
