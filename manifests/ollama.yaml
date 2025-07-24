@@ -337,6 +337,29 @@ spec:
       labels:
         app: open-webui
     spec:
+      initContainers:
+        - name: wait-for-vault-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "🔄 Waiting for Vault role 'openwebui' to exist..."
+              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
+
+              while true; do
+                if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
+                  echo "✅ Vault role is ready."
+                  exit 0
+                fi
+                echo "⏳ Still waiting..."
+                sleep 60
+              done
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault-token
+              readOnly: true
+
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
@@ -402,6 +425,9 @@ spec:
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
+        - name: vault-token
+          secret:
+            secretName: vault-root-token
 ---
 apiVersion: v1
 kind: Service
