@@ -420,7 +420,7 @@ spec:
           - |
             echo "📌 Loading database credentials from Vault..."
             . /shared/db.env
-            
+            echo "Using DATABASE_URL=$DATABASE_URL"
             exec /app/backend/start.sh
           resources:
             requests:
