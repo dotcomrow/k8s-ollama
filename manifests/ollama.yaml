@@ -75,12 +75,11 @@ spec:
 
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
-              until vault write yugabyte-db/config/test-conn \
-                plugin_name=postgresql-database-plugin \
-                connection_url="postgresql://vaultadmin:bogus@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" 2>&1 | grep -q 'password authentication\|permission denied'; do
+              until timeout 1 bash -c "echo > /dev/tcp/${PGHOST}/${PGPORT}" 2>/dev/null; do
                 echo "🔄 Still waiting for Yugabyte..."
                 sleep 5
               done
+              echo "✅ YugabyteDB is available."
 
               VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin)
               echo "Using Vault admin password: $VAULTADMIN_PASSWORD"
