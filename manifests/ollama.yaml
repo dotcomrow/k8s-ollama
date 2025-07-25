@@ -246,31 +246,27 @@ spec:
                 echo "MODEL_FILE=$MODEL_FILE"
                 cat "$MODEL_FILE"
 
-                # Make a clean temporary copy in case ConfigMap is read-only
                 CLEANED_FILE=$(mktemp)
                 sed 's/\r$//' "$MODEL_FILE" > "$CLEANED_FILE"
                 MODEL_FILE="$CLEANED_FILE"
 
                 DEFAULT_MODEL="deepseek-r1:14b"
 
-                echo "Loading models listed in $MODEL_FILE..."
+                echo "Pre-downloading models listed in $MODEL_FILE..."
                 while IFS= read -r model || [ -n "$model" ]; do
                   trimmed=$(echo "$model" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                   first_char=$(printf "%s" "$trimmed" | cut -c1)
 
-                  # Skip comments and blank lines
                   if [ -z "$trimmed" ] || [ "$first_char" = "#" ]; then
                     continue
                   fi
 
-                  echo "📦 Downloading model: $trimmed"
-                  ollama run "$trimmed" || echo "❌ Failed to run $trimmed"
-
-                  if [ "$trimmed" != "$DEFAULT_MODEL" ]; then
-                    echo "🧹 Evicting model: $trimmed"
-                    curl -s -X POST http://localhost:11434/api/delete -d "{\"name\":\"$trimmed\"}" || echo "⚠️ Failed to evict $trimmed"
+                  if [ "$trimmed" = "$DEFAULT_MODEL" ]; then
+                    echo "⭐ Running default model: $trimmed"
+                    ollama run "$trimmed"
                   else
-                    echo "⭐ Keeping default model loaded: $DEFAULT_MODEL"
+                    echo "📦 Pre-downloading model: $trimmed"
+                    ollama pull "$trimmed" || echo "❌ Failed to pull $trimmed"
                   fi
                 done < "$MODEL_FILE"
 
