@@ -299,17 +299,20 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              apk add --no-cache wget >/dev/null 2>&1
-              MODEL_FILE="/opt/ollama-models/models.txt"
-              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
-
-              echo "Keep-warm default model: $DEFAULT_MODEL"
+              apk add --no-cache wget jq >/dev/null 2>&1
 
               while true; do
-                echo "Keeping model $DEFAULT_MODEL warm..."
-                wget -qO- --header="Content-Type: application/json" \
-                  --post-data="{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" \
-                  http://localhost:11434/api/generate >/dev/null
+                ACTIVE_MODEL=$(wget -qO- http://localhost:11434/api/tags | jq -r '.models[0].name')
+                
+                if [ -n "$ACTIVE_MODEL" ] && [ "$ACTIVE_MODEL" != "null" ]; then
+                  echo "🔄 Keeping model $ACTIVE_MODEL warm..."
+                  wget -qO- --header="Content-Type: application/json" \
+                    --post-data="{\"model\": \"$ACTIVE_MODEL\", \"prompt\": \" \", \"stream\": false}" \
+                    http://localhost:11434/api/generate >/dev/null
+                else
+                  echo "⚠️ No active model loaded."
+                fi
+
                 sleep 120
               done
           resources:
