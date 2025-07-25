@@ -207,8 +207,22 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              echo "🚀 Starting Ollama server..."
+              ollama serve > /tmp/ollama.log 2>&1 &
+              SERVER_PID=$!
+
+              # Wait for the server to start responding
+              echo "⏳ Waiting for Ollama server..."
+              for i in $(seq 1 30); do
+                if curl -sf http://localhost:11434/api/tags > /dev/null; then
+                  echo "✅ Ollama server is ready!"
+                  break
+                fi
+                sleep 1
+              done
+
               MODEL_FILE="/opt/ollama-models/models.txt"
-              echo "Downloading models listed in $MODEL_FILE..."
+              echo "📄 Downloading models listed in $MODEL_FILE..."
 
               while IFS= read -r model; do
                 if [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ]; then
@@ -216,6 +230,10 @@ spec:
                   ollama pull "$model"
                 fi
               done < "$MODEL_FILE"
+
+              echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
+              kill $SERVER_PID
+              wait $SERVER_PID
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama/models
