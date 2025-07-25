@@ -246,13 +246,17 @@ spec:
                 echo "MODEL_FILE=$MODEL_FILE"
                 cat "$MODEL_FILE"
 
-                # Fix line endings
-                sed -i 's/\r$//' "$MODEL_FILE"
+                # Create a temp copy with cleaned line endings (if needed)
+                CLEANED_FILE=$(mktemp)
+                sed 's/\r$//' "$MODEL_FILE" > "$CLEANED_FILE"
+                MODEL_FILE="$CLEANED_FILE"
 
                 echo "Loading models listed in $MODEL_FILE..."
                 while IFS= read -r model || [ -n "$model" ]; do
-                  trimmed="$(echo "$model" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-                  if [ -n "$trimmed" ] && [ "${trimmed:0:1}" != "#" ]; then
+                  trimmed=$(echo "$model" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                  first_char=$(printf "%s" "$trimmed" | cut -c1)
+
+                  if [ -n "$trimmed" ] && [ "$first_char" != "#" ]; then
                     echo "Warming up model: $trimmed"
                     ollama run "$trimmed" || echo "❌ Failed to load $trimmed"
                   fi
