@@ -85,6 +85,7 @@ spec:
               export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
 
               VAULTADMIN_PASSWORD=$(vault kv get -field=password secret/vaultadmin)
+              echo "Using Vault admin password: $VAULTADMIN_PASSWORD"
 
               # ✅ Configure the DB connection with allowed_roles
               vault write yugabyte-db/config/yugabyte \
