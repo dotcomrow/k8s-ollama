@@ -75,7 +75,8 @@ spec:
 
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
-              until timeout 1 bash -c "echo > /dev/tcp/${PGHOST}/${PGPORT}" 2>/dev/null; do
+              while true; do
+                nc -z -w 1 "${PGHOST}" "${PGPORT}" >/dev/null 2>&1 && break
                 echo "🔄 Still waiting for Yugabyte..."
                 sleep 5
               done
