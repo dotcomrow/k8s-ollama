@@ -306,7 +306,7 @@ spec:
               memory: "12Gi"     # Same as before - memory usage often spikes for LLM inference
               nvidia.com/gpu: 1
           volumeMounts:
-            - name: model-store
+            - name: ollama-data
               mountPath: /root/.ollama/models
             - name: model-list
               mountPath: /opt/ollama-models
