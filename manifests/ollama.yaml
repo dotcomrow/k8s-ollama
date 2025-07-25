@@ -217,7 +217,7 @@ spec:
                 fi
               done < "$MODEL_FILE"
           volumeMounts:
-            - name: model-cache
+            - name: ollama-data
               mountPath: /root/.ollama/models
             - name: model-list
               mountPath: /opt/ollama-models
