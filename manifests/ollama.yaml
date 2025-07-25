@@ -243,11 +243,18 @@ spec:
                 done
 
                 echo "Loading models listed in $MODEL_FILE..."
-                while IFS= read -r model; do
-                  # Skip comments and blank lines
-                  if [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ]; then
-                    echo "Warming up model: $model"
-                    ollama run "$model"
+                echo "MODEL_FILE=$MODEL_FILE"
+                cat "$MODEL_FILE"
+
+                # Fix line endings
+                sed -i 's/\r$//' "$MODEL_FILE"
+
+                echo "Loading models listed in $MODEL_FILE..."
+                while IFS= read -r model || [ -n "$model" ]; do
+                  trimmed="$(echo "$model" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                  if [ -n "$trimmed" ] && [ "${trimmed:0:1}" != "#" ]; then
+                    echo "Warming up model: $trimmed"
+                    ollama run "$trimmed" || echo "❌ Failed to load $trimmed"
                   fi
                 done < "$MODEL_FILE"
 
