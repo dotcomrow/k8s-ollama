@@ -86,6 +86,7 @@ spec:
               echo "Using Vault admin password: $VAULTADMIN_PASSWORD"
 
               # ✅ Configure the DB connection with allowed_roles
+              vault delete yugabyte-db/config/yugabyte
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 allowed_roles="openwebui" \
