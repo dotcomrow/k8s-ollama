@@ -71,6 +71,8 @@ spec:
             - |
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
+              which bash
+              
               echo "⏳ Waiting for YugabyteDB to be ready at ${PGHOST}:${PGPORT}..."
               while true; do
                 bash -c "echo > /dev/tcp/${PGHOST}/${PGPORT}" >/dev/null 2>&1 && break
