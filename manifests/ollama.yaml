@@ -192,12 +192,21 @@ spec:
               while true; do
                 if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
                   echo "✅ Vault role is ready."
-                  break
+                  exit 0
                 fi
                 echo "⏳ Still waiting..."
                 sleep 60
               done
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault-token
+              readOnly: true
 
+        - name: download-models
+          image: ollama/ollama:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
               MODEL_FILE="/opt/ollama-models/models.txt"
               echo "Downloading models listed in $MODEL_FILE..."
 
@@ -208,11 +217,8 @@ spec:
                 fi
               done < "$MODEL_FILE"
           volumeMounts:
-            - name: vault-token
-              mountPath: /vault-token
-              readOnly: true
-            - name: ollama-data
-              mountPath: /root/.ollama
+            - name: model-cache
+              mountPath: /root/.ollama/models
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
