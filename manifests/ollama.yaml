@@ -391,7 +391,7 @@ spec:
               curl -s --header "X-Vault-Token: $LOGIN_TOKEN" \
                 $VAULT_ADDR/v1/yugabyte-db/creds/openwebui \
                 | tee /tmp/vault-creds.json \
-                | jq -r '.data | "DATABASE_URL=postgresql://\(.username):\(.password)@yb-tserver-service.yugabyte.svc.cluster.local:5433/\(.username)"' > /shared/db.env
+                | jq -r '.data | "DATABASE_URL=postgresql://\(.username):\(.password)@yb-tserver-service.yugabyte.svc.cluster.local:5433/yugabyte"' > /shared/db.env
               echo "📌 YugabyteDB credentials saved to /shared/db.env"
               cat /shared/db.env
               echo "Vault response:"
