@@ -66,7 +66,7 @@ spec:
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
-          command: ["/bin/bash", "-c"]
+          command: ["/bin/sh", "-c"]
           args:
             - |
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
