@@ -96,7 +96,7 @@ spec:
               vault write yugabyte-db/roles/openwebui \
                 db_name=yugabyte \
                 creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}'; GRANT ALL PRIVILEGES ON DATABASE yugabyte TO \"{{name}}\";" \
-                default_ttl="1h" \
+                default_ttl="24h" \
                 max_ttl="24h"
 
               # ✅ Upload Vault policy
@@ -113,7 +113,7 @@ spec:
                 bound_service_account_names=openwebui \
                 bound_service_account_namespaces=ollama \
                 policies=openwebui \
-                ttl=1h
+                ttl=24h
 
           volumeMounts:
             - name: root-token
