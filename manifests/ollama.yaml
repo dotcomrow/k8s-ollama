@@ -392,57 +392,16 @@ spec:
     metadata:
       labels:
         app: open-webui
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "openwebui"
+        vault.hashicorp.com/agent-inject-secret-db-env: yugabyte-db/creds/openwebui
+        vault.hashicorp.com/agent-inject-template-db-env: |
+          {{- with secret "yugabyte-db/creds/openwebui" -}}
+          DATABASE_URL=postgresql://{{ .Data.username }}:{{ .Data.password }}@yb-tserver-service.yugabyte.svc.cluster.local:5433/{{ .Data.username }}
+          {{- end }}
     spec:
       serviceAccountName: openwebui
-      initContainers:
-        - name: wait-for-vault-role
-          image: hashicorp/vault:1.15.4
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              echo "🔄 Waiting for Vault role 'openwebui' to exist..."
-              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-              while true; do
-                if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
-                  echo "✅ Vault role is ready."
-                  break
-                fi
-                echo "⏳ Still waiting..."
-                sleep 10
-              done
-
-              echo "⏳ Creating YugabyteDB credentials from Vault..."
-              apk add --no-cache curl jq > /dev/null
-
-              # ✅ Use the Kubernetes ServiceAccount JWT (not the Vault root token)
-              KUBE_JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-
-              # 🔐 Login using the Kubernetes Auth Method
-              curl -s --request POST \
-                --data '{"jwt": "'"$KUBE_JWT"'", "role": "openwebui"}' \
-                $VAULT_ADDR/v1/auth/kubernetes/login > /tmp/vault-login.json
-
-              LOGIN_TOKEN=$(jq -r .auth.client_token /tmp/vault-login.json)
-
-              # 🔑 Retrieve database credentials
-              echo "📌 Fetching YugabyteDB credentials from Vault..."
-              curl -s --header "X-Vault-Token: $LOGIN_TOKEN" \
-                $VAULT_ADDR/v1/yugabyte-db/creds/openwebui \
-                | tee /tmp/vault-creds.json \
-                | jq -r '.data | "DATABASE_URL=postgresql://\(.username):\(.password)@yb-tserver-service.yugabyte.svc.cluster.local:5433/\(.username)"' > /shared/db.env
-              echo "📌 YugabyteDB credentials saved to /shared/db.env"
-              cat /shared/db.env
-              echo "Vault response:"
-              cat /tmp/vault-creds.json
-              echo "✅ YugabyteDB credentials saved to /shared/db.env"
-          volumeMounts:
-            - name: vault-token
-              mountPath: /vault-token
-              readOnly: true
-            - name: shared
-              mountPath: /shared
-
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
@@ -457,8 +416,8 @@ spec:
           args:
           - -c
           - |
-            echo "📌 Loading database credentials from Vault..."
-            . /shared/db.env
+            echo "📌 Sourcing injected Vault secrets..."
+            . /vault/secrets/db-env
             echo "Using DATABASE_URL=$DATABASE_URL"
             exec /app/backend/start.sh
           resources:
@@ -471,17 +430,10 @@ spec:
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
-            - name: shared
-              mountPath: /shared
       volumes:
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
-        - name: vault-token
-          secret:
-            secretName: vault-root-token
-        - name: shared
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
