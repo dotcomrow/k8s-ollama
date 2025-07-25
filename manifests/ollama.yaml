@@ -84,11 +84,13 @@ spec:
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
               export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
 
+              VAULTADMIN_PASSWORD=$(vault kv get -field=password secret/vaultadmin)
+
               # ✅ Configure the DB connection with allowed_roles
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 allowed_roles="openwebui" \
-                connection_url="postgresql://vaultadmin:vaultadminpassword@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable"
+                connection_url="postgresql://vaultadmin:$VAULTADMIN_PASSWORD@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable"
 
               # ✅ Create the Vault DB role
               vault write yugabyte-db/roles/openwebui \
