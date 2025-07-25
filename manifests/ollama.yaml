@@ -45,8 +45,6 @@ data:
   models.txt: |
     # default: deepseek-r1:14b
     deepseek-r1:14b
-    codellama:13b-instruct
-    llama3:8b-instruct
 ---
 apiVersion: batch/v1
 kind: Job
@@ -320,7 +318,7 @@ spec:
               apk add --no-cache wget jq >/dev/null 2>&1
 
               while true; do
-                ACTIVE_MODEL=$(wget -qO- http://localhost:11434/api/tags | jq -r '.models[0].name')
+                ACTIVE_MODEL=$(wget -qO- http://localhost:11434/api/show | jq -r '.models[0].name')
                 
                 if [ -n "$ACTIVE_MODEL" ] && [ "$ACTIVE_MODEL" != "null" ]; then
                   echo "🔄 Keeping model $ACTIVE_MODEL warm..."
