@@ -214,7 +214,7 @@ spec:
               # Wait for the server to start responding
               echo "⏳ Waiting for Ollama server..."
               for i in $(seq 1 30); do
-                if curl -sf http://localhost:11434/api/tags > /dev/null; then
+                if wget --spider -q http://localhost:11434/api/tags; then
                   echo "✅ Ollama server is ready!"
                   break
                 fi
