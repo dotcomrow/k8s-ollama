@@ -90,7 +90,9 @@ spec:
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 allowed_roles="openwebui" \
-                connection_url="postgresql://vaultadmin:$VAULTADMIN_PASSWORD@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable"
+                connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
+                username="vaultadmin" \
+                password="$VAULTADMIN_PASSWORD"
 
               # ✅ Create the Vault DB role
               vault write yugabyte-db/roles/openwebui \
