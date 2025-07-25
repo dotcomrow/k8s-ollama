@@ -272,48 +272,27 @@ spec:
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
 
               MODEL_FILE="/opt/ollama-models/models.txt"
-              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}')
+              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}' | xargs)
               echo "Default model: $DEFAULT_MODEL"
               export OLLAMA_NO_CPU_OFFLOAD=1
+
               (
-                echo "Waiting for Ollama to be ready..."
-                until ollama list >/dev/null 2>&1; do
-                  echo "Waiting..."; sleep 1;
+                echo "⏳ Waiting for Ollama to be ready..."
+                until wget --spider -q http://localhost:11434/api/tags; do
+                  echo "Waiting..."
+                  sleep 1
                 done
 
-                echo "Loading models listed in $MODEL_FILE..."
-                echo "MODEL_FILE=$MODEL_FILE"
-                cat "$MODEL_FILE"
+                echo "🔥 Warming up default model: $DEFAULT_MODEL"
+                # Trigger loading of default model into memory
+                curl -s -X POST http://localhost:11434/api/generate \
+                  -H "Content-Type: application/json" \
+                  -d "{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" >/dev/null
 
-                CLEANED_FILE=$(mktemp)
-                sed 's/\r$//' "$MODEL_FILE" > "$CLEANED_FILE"
-                MODEL_FILE="$CLEANED_FILE"
-
-                DEFAULT_MODEL="deepseek-r1:14b"
-
-                echo "Pre-downloading models listed in $MODEL_FILE..."
-                while IFS= read -r model || [ -n "$model" ]; do
-                  trimmed=$(echo "$model" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                  first_char=$(printf "%s" "$trimmed" | cut -c1)
-
-                  if [ -z "$trimmed" ] || [ "$first_char" = "#" ]; then
-                    continue
-                  fi
-
-                  if [ "$trimmed" = "$DEFAULT_MODEL" ]; then
-                    echo "⭐ Running default model: $trimmed"
-                    ollama run "$trimmed"
-                  else
-                    echo "📦 Pre-downloading model: $trimmed"
-                    ollama pull "$trimmed" || echo "❌ Failed to pull $trimmed"
-                  fi
-                done < "$MODEL_FILE"
-
-                echo "All models warmed. Starting Ollama server."
-                ollama run $DEFAULT_MODEL
-                echo "Models are ready."
-                echo "Default model is: $DEFAULT_MODEL"
+                echo "✅ Default model warmed and ready."
               ) &
+
+              # Start Ollama server in foreground
               exec ollama serve
           ports:
             - containerPort: 11434
@@ -327,8 +306,8 @@ spec:
               memory: "12Gi"     # Same as before - memory usage often spikes for LLM inference
               nvidia.com/gpu: 1
           volumeMounts:
-            - name: ollama-data
-              mountPath: /root/.ollama
+            - name: model-store
+              mountPath: /root/.ollama/models
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
