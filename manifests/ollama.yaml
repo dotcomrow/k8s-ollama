@@ -99,12 +99,6 @@ spec:
                 bound_service_account_names=openwebui \
                 bound_service_account_namespaces=ollama \
                 policies=openwebui \
-                ttl=1h
-
-              vault write auth/kubernetes/role/openwebui \
-                bound_service_account_names=openwebui \
-                bound_service_account_namespaces=ollama \
-                policies=openwebui \
                 ttl=1h \
                 allowed_roles=openwebui
 
