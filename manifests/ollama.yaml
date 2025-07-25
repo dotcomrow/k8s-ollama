@@ -84,23 +84,34 @@ spec:
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
               export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
 
-              # Write the policy to a file
+              # ✅ Configure the DB connection with allowed_roles
+              vault write yugabyte-db/config/yugabyte \
+                plugin_name=postgresql-database-plugin \
+                allowed_roles="openwebui" \
+                connection_url="postgresql://vaultadmin:vaultadminpassword@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable"
+
+              # ✅ Create the Vault DB role
+              vault write yugabyte-db/roles/openwebui \
+                db_name=yugabyte \
+                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}'; GRANT ALL PRIVILEGES ON DATABASE yugabyte TO \"{{name}}\";" \
+                default_ttl="1h" \
+                max_ttl="24h"
+
+              # ✅ Upload Vault policy
               cat <<EOF > openwebui-policy.hcl
               path "yugabyte-db/creds/openwebui" {
                 capabilities = ["read"]
               }
               EOF
 
-              # Upload the policy to Vault
               vault policy write openwebui openwebui-policy.hcl
 
-              # Create the role
+              # ✅ Bind Kubernetes SA to the policy
               vault write auth/kubernetes/role/openwebui \
                 bound_service_account_names=openwebui \
                 bound_service_account_namespaces=ollama \
                 policies=openwebui \
-                ttl=1h \
-                allowed_roles=openwebui
+                ttl=1h
 
           volumeMounts:
             - name: root-token
