@@ -315,6 +315,12 @@ spec:
       targetPort: 11434
   clusterIP: None
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openwebui
+  namespace: ollama
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
