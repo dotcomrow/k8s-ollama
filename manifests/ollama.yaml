@@ -270,7 +270,7 @@ spec:
             - |
               echo "Resetting GPU..."
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
-              apt update && apt install wget -y
+              apt update && apt install wget curl -y
               MODEL_FILE="/opt/ollama-models/models.txt"
               DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}' | xargs)
               echo "Default model: $DEFAULT_MODEL"
