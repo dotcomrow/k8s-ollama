@@ -420,16 +420,7 @@ spec:
           - |
             echo "📌 Loading database credentials from Vault..."
             . /shared/db.env
-            echo "Using DATABASE_URL=$DATABASE_URL"
-
-            echo "⏳ Waiting for YugabyteDB to accept connections on DATABASE_URL..."
-            while ! PGPASSWORD=$(echo "$DATABASE_URL" | sed -n 's/.*:\/\/[^:]*:\([^@]*\)@.*/\1/p') \
-                  psql "$DATABASE_URL" -c '\q' 2>/dev/null; do
-              echo "🔄 Still waiting for Yugabyte..."
-              sleep 5
-            done
-
-            echo "✅ YugabyteDB is available."
+            
             exec /app/backend/start.sh
           resources:
             requests:
