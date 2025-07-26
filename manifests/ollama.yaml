@@ -213,12 +213,15 @@ spec:
               SERVER_PID=$!
               apt update && apt install wget -y
               # Wait for the server to start responding
-              echo "⏳ Waiting for Ollama server..."
-              for i in $(seq 1 30); do
+              echo "⏳ Waiting for Ollama server to be ready..."
+              i=1
+              while true; do
                 if wget --spider -q http://localhost:11434/api/tags; then
                   echo "✅ Ollama server is ready!"
                   break
                 fi
+                echo "⏳ Still waiting... ($i)"
+                i=$((i + 1))
                 sleep 1
               done
 
