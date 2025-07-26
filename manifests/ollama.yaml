@@ -143,34 +143,35 @@ spec:
       containers:
         - name: create-db
           image: yugabytedb/yugabyte:latest
-          command: ["/bin/sh", "-c"]
+          command: ["/bin/bash", "-c"]
           args:
             - |
               echo "🔄 Waiting for YugabyteDB to be ready..."
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               PGUSER=vaultadmin
-              export PGPASSWORD=$(kubectl get secret vault-root-token -n ollama -o jsonpath="{.data.VAULT_TOKEN}" | base64 -d | xargs -I{} curl -s -X GET -H "X-Vault-Token: {}" http://vault.vault.svc.cluster.local:8200/v1/secret/data/vaultadmin | jq -r '.data.data.value')
+              PGPASSWORD=$(cat /vault-token/VAULT_TOKEN)
 
-              until pg_isready -h $PGHOST -p $PGPORT -U $PGUSER; do
-                echo "⏳ Waiting for YugabyteDB to accept connections..."
-                sleep 5
+              export PGPASSWORD
+
+              i=1
+              while true; do
+                echo "⏳ Checking connection... ($i)"
+                if psql -h $PGHOST -p $PGPORT -U $PGUSER -d yugabyte -c "SELECT 1"; then
+                  break
+                fi
+                i=$((i + 1))
+                sleep 3
               done
 
-              echo "✅ YugabyteDB is ready. Checking for database..."
+              echo "✅ Connected. Checking for 'openwebui' DB..."
               EXISTS=$(psql -h $PGHOST -p $PGPORT -U $PGUSER -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'")
               if [ "$EXISTS" != "1" ]; then
                 echo "📦 Creating database 'openwebui'..."
-                psql -h $PGHOST -p $PGPORT -U $PGUSER -c "CREATE DATABASE openwebui"
+                createdb -h $PGHOST -p $PGPORT -U $PGUSER openwebui
               else
                 echo "✅ Database 'openwebui' already exists."
               fi
-          env:
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: vault-root-token
-                  key: VAULT_TOKEN
           resources:
             requests:
               cpu: "50m"
@@ -178,6 +179,14 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault-token
+              readOnly: true
+      volumes:
+        - name: vault-token
+          secret:
+            secretName: vault-root-token
       serviceAccountName: default
 ---
 apiVersion: batch/v1
