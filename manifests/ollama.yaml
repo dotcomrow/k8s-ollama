@@ -403,6 +403,11 @@ spec:
           {{- with secret "yugabyte-db/creds/openwebui" -}}
           DATABASE_URL=postgresql://{{ .Data.username }}:{{ .Data.password }}@yb-tserver-service.yugabyte.svc.cluster.local:5433/{{ .Data.username }}
           {{- end }}
+        vault.hashicorp.com/agent-extra-annotations: |
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
     spec:
       serviceAccountName: openwebui
 
