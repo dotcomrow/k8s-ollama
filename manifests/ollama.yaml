@@ -443,7 +443,7 @@ spec:
               EOF
 
               echo "🚀 Starting Vault Agent";
-              vault agent -once -config=/vault/config/agent.hcl -log-level=debug
+              vault agent -once -log-level=debug -config=/vault/config/agent.hcl
 
           volumeMounts:
             - name: vault-config
