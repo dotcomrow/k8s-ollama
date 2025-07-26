@@ -97,7 +97,7 @@ spec:
                 db_name=yugabyte \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
-                  CREATE DATABASE \"{{name}}\" OWNER \"{{name}}\";
+                  GRANT ALL PRIVILEGES ON DATABASE openwebui TO \"{{name}}\";
                 " \
                 default_ttl=24h \
                 max_ttl=24h
