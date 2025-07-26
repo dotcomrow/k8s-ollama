@@ -465,7 +465,6 @@ spec:
               readOnly: true
             - name: vault-config
               mountPath: /vault/templates
-              subPath: db-env.tpl
               readOnly: true
             - name: vault-secrets
               mountPath: /vault/secrets
