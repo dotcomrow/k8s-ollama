@@ -142,8 +142,8 @@ spec:
       restartPolicy: Never
       containers:
         - name: create-db
-          image: yugabytedb/yugabyte:latest
-          command: ["/bin/bash", "-c"]
+          image: postgres:15  # Or any recent version
+          command: ["/bin/sh", "-c"]
           args:
             - |
               echo "🔄 Waiting for YugabyteDB to be ready..."
