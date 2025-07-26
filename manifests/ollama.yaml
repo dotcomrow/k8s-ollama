@@ -417,6 +417,16 @@ spec:
                   sleep 2;
                 done
 
+                cat > /vault/config/agent.hcl <<EOF
+                vault {
+                  address = "http://vault.vault.svc.cluster.local:8200"
+                }
+
+                injector {
+                  log_level = "info"
+                }
+                EOF
+
                 echo "🚀 Starting Vault Agent";
                 vault agent -config=/vault/config/agent.hcl -log-level=debug
 
