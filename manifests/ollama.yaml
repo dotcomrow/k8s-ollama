@@ -95,9 +95,12 @@ spec:
               # ✅ Create the Vault DB role
               vault write yugabyte-db/roles/openwebui \
                 db_name=yugabyte \
-                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}'; GRANT ALL PRIVILEGES ON DATABASE yugabyte TO \"{{name}}\";" \
-                default_ttl="24h" \
-                max_ttl="24h"
+                creation_statements="
+                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
+                  CREATE DATABASE \"{{name}}\" OWNER \"{{name}}\";
+                " \
+                default_ttl=24h \
+                max_ttl=24h
 
               # ✅ Upload Vault policy
               cat <<EOF > openwebui-policy.hcl
