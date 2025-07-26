@@ -403,6 +403,19 @@ spec:
           {{- end }}
     spec:
       serviceAccountName: openwebui
+
+      initContainers:
+        - name: debug
+          image: busybox
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "🔍 DNS test";
+              nslookup vault.vault.svc.cluster.local;
+              echo "🔍 Curl test";
+              wget -O- http://vault.vault.svc.cluster.local:8200/v1/sys/health;
+              sleep 600;
+
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
