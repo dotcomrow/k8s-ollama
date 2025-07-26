@@ -405,7 +405,7 @@ spec:
       serviceAccountName: openwebui
 
       initContainers:
-          - name: vault-agent-init
+          - name: vault-agent-init-test
             image: hashicorp/vault:1.14.3
             command: ["/bin/sh", "-c"]
             args:
