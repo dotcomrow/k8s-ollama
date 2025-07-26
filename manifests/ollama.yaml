@@ -140,6 +140,17 @@ spec:
   template:
     spec:
       restartPolicy: Never
+
+      initContainers:
+        - name: inject-vault
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - cp /bin/vault /vault-bin/vault && chmod +x /vault-bin/vault
+          volumeMounts:
+            - name: vault-bin
+              mountPath: /vault-bin
+
       containers:
         - name: create-db
           image: postgres:15  # Or any recent version
@@ -147,15 +158,18 @@ spec:
           args:
             - |
               echo "🔄 Waiting for YugabyteDB to be ready..."
+              export PATH=$PATH:/vault-bin
+              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+              VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
+              export VAULT_TOKEN
+
+              VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin)
+
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               PGUSER=vaultadmin
-              PGPASSWORD=$(cat /vault-token/VAULT_TOKEN)
-
+              PGPASSWORD="$VAULTADMIN_PASSWORD"
               export PGPASSWORD
-
-              echo "🔧 Installing PostgreSQL client..."
-              yum install -y postgresql
 
               i=1
               while true; do
@@ -186,10 +200,14 @@ spec:
             - name: vault-token
               mountPath: /vault-token
               readOnly: true
+            - name: vault-bin
+              mountPath: /vault-bin
       volumes:
         - name: vault-token
           secret:
             secretName: vault-root-token
+        - name: vault-bin
+          emptyDir: {}
       serviceAccountName: default
 ---
 apiVersion: batch/v1
