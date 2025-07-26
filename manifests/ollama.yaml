@@ -426,7 +426,7 @@ spec:
                   method "kubernetes" {
                     mount_path = "auth/kubernetes"
                     config = {
-                      role = "your-vault-role"
+                      role = "openwebui"
                     }
                   }
 
@@ -435,10 +435,6 @@ spec:
                       path = "/home/vault/.vault-token"
                     }
                   }
-                }
-
-                cache {
-                  use_auto_auth_token = true
                 }
                 EOF
 
