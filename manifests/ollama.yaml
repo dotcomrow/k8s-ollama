@@ -422,8 +422,23 @@ spec:
                   address = "http://vault.vault.svc.cluster.local:8200"
                 }
 
-                injector {
-                  log_level = "info"
+                auto_auth {
+                  method "kubernetes" {
+                    mount_path = "auth/kubernetes"
+                    config = {
+                      role = "your-vault-role"
+                    }
+                  }
+
+                  sink "file" {
+                    config = {
+                      path = "/home/vault/.vault-token"
+                    }
+                  }
+                }
+
+                cache {
+                  use_auto_auth_token = true
                 }
                 EOF
 
