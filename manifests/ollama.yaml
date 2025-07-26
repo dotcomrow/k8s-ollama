@@ -470,7 +470,7 @@ spec:
               mountPath: /vault/secrets
 
         - name: vault-reloader
-          image: ghcr.io/bank-vaults/vault-secrets-webhook:1.21.0
+          image: docker.io/banzaicloud/vault-secrets-webhook:1.21.0
           args:
             - "vault-secrets-webhook"
             - "--on-secret-change=touch /vault/secrets/db-env"
