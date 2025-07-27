@@ -180,6 +180,7 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      ttlSecondsAfterFinished: 300
 
       initContainers:
         - name: inject-vault
