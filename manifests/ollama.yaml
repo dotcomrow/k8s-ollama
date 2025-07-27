@@ -539,6 +539,9 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
