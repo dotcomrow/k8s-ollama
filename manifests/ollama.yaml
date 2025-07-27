@@ -680,8 +680,7 @@ spec:
                   DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui"
 
                   echo "🔐 Creating/updating Kubernetes secret..."
-                  while true; do
-                  cat <<EOF | kubectl apply -f - && break
+                  cat <<EOF | kubectl apply -f - 
                   apiVersion: v1
                   kind: Secret
                   metadata:
@@ -691,9 +690,7 @@ spec:
                   stringData:
                     DATABASE_URL: ${DB_URL}
                   EOF
-                    echo "⚠️ Failed to create secret. Retrying in ${RETRY_INTERVAL}s..."
-                    sleep "$RETRY_INTERVAL"
-                  done
+
               resources:
                 requests:
                   cpu: "50m"
