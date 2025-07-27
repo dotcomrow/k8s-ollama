@@ -662,7 +662,7 @@ data:
     }
   db-env.tpl: |
     {{- with secret "yugabyte-db/creds/openwebui" -}}
-    DATABASE_URL=postgresql://{{ .Data.username }}:{{ .Data.password }}@yb-tserver-service.yugabyte.svc.cluster.local:5433/{{ .Data.username }}
+    DATABASE_URL=postgresql://{{ .Data.username }}:{{ .Data.password }}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui
     {{- end }}
 ---
 apiVersion: v1
