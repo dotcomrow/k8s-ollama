@@ -49,7 +49,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: create-openwebui-vault-role
+  name: openwebui-yugabyte-config
   namespace: vault
 spec:
   backoffLimit: 1
@@ -70,170 +70,149 @@ spec:
               #!/bin/bash
               set -euo pipefail
 
-              echo "📌 Creating Vault policy and role for openwebui..."
+              echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
 
-              # --- Setup environment ---
+              # --- Constants ---
+              export PATH=$PATH:/vault-bin
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
 
-              # Wait for Vault token file
-              while true; do
-                if [[ -f /vault-token/VAULT_TOKEN ]]; then
-                  export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-                  break
-                fi
+              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
+              PGPORT="5433"
+              VAULTADMIN_USER="vaultadmin"
+              OPENWEBUI_USER="openwebui"
+              OPENWEBUI_DB="openwebui"
+              VAULT_ROLE="openwebui"
+              VAULT_POLICY="openwebui"
+
+              # --- Wait for Vault token ---
+              while [ ! -f /vault-token/VAULT_TOKEN ]; do
                 echo "🔁 Waiting for Vault token file..."
                 sleep 2
               done
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
 
-              # Wait for DNS to resolve PGHOST
-              export PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
-              export PGPORT=5433
+              # --- Wait for DB availability ---
+              until getent hosts "$PGHOST" >/dev/null; do
+                echo "🔄 Waiting for DNS for $PGHOST..."
+                sleep 3
+              done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do
+                echo "⏳ Waiting for DB port $PGPORT..."
+                sleep 3
+              done
+              echo "✅ YugabyteDB is reachable"
+
+              # --- Fetch vaultadmin password from Vault ---
+              echo "🔐 Fetching vaultadmin password from Vault..."
               while true; do
-                if getent hosts "$PGHOST" > /dev/null; then
-                  echo "✅ DNS resolved for $PGHOST"
+                PGPASSWORD="$(vault kv get -field=value secret/$VAULTADMIN_USER 2>/dev/null || true)"
+                if [[ -n "$PGPASSWORD" ]]; then
+                  export PGPASSWORD
                   break
                 fi
-                echo "🔁 Waiting for DNS to resolve $PGHOST..."
+                echo "🔁 Waiting for secret/$VAULTADMIN_USER to become available..."
                 sleep 3
               done
 
-              # Wait for TCP port to be reachable
-              echo "⏳ Waiting for YugabyteDB to become available at $PGHOST:$PGPORT..."
-              while ! nc -z -w 1 "$PGHOST" "$PGPORT"; do
-                echo "🔁 Still waiting for Yugabyte..."
-                sleep 3
-              done
-              echo "✅ YugabyteDB is available."
+              # --- Ensure openwebui database exists ---
+              echo "📦 Checking if $OPENWEBUI_DB exists..."
+              DB_EXISTS=$(ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'")
+              if [[ "$DB_EXISTS" != "1" ]]; then
+                echo "📦 Creating database $OPENWEBUI_DB..."
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$OPENWEBUI_DB"
+              else
+                echo "✅ Database $OPENWEBUI_DB already exists"
+              fi
 
-              # --- Get Vault admin password ---
-              echo "🔐 Fetching Vault admin password from secret/vaultadmin..."
-              while true; do
-                VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin 2>/dev/null || true)
-                if [[ -n "$VAULTADMIN_PASSWORD" ]]; then
-                  echo "✅ Vault admin password retrieved."
-                  break
-                fi
-                echo "🔁 Waiting for secret/vaultadmin to be available in Vault..."
-                sleep 3
-              done
-
-              # --- Ensure psql is available ---
-              echo "🔧 Ensuring PostgreSQL client is installed..."
-              apk add postgresql-client || {
-                echo "❌ Failed to install PostgreSQL client"
-                exit 1
-              }
-
-              # --- Grant vaultadmin privileges on schema and tables ---
-              echo "🏡 Granting vaultadmin privileges on schema openwebui and its tables..."
-              while true; do
-                PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" <<EOSQL && break
+              # --- Create openwebui user and grant access ---
+              echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
+              ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
               DO \$\$
               BEGIN
-                BEGIN
-                  EXECUTE 'GRANT CONNECT ON DATABASE openwebui TO vaultadmin';
-                EXCEPTION WHEN OTHERS THEN NULL;
-                END;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OPENWEBUI_USER') THEN
+                  CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD 'changeme';
+                END IF;
 
-                BEGIN
-                  EXECUTE 'GRANT USAGE ON SCHEMA openwebui TO vaultadmin';
-                EXCEPTION WHEN OTHERS THEN NULL;
-                END;
+                GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;
+                GRANT USAGE ON SCHEMA public TO $OPENWEBUI_USER;
+                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $OPENWEBUI_USER;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $OPENWEBUI_USER;
 
-                BEGIN
-                  EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO vaultadmin';
-                EXCEPTION WHEN OTHERS THEN NULL;
-                END;
-
-                BEGIN
-                  EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin';
-                EXCEPTION WHEN OTHERS THEN NULL;
-                END;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT ALL ON TABLES TO $OPENWEBUI_USER;
               END
               \$\$;
-              EOSQL
-                echo "🔁 Retrying grants to vaultadmin..."
-                sleep 3
-              done
-              echo "✅ Granted vaultadmin privileges."
+              SQL
+              echo "✅ User $OPENWEBUI_USER setup complete"
 
-              # --- Reconfigure Vault DB secrets engine connection ---
-              echo "⚙️ Reconfiguring Vault DB connection (path: yugabyte-db/config/yugabyte)..."
-              vault delete yugabyte-db/config/yugabyte || echo "ℹ️ No previous config to delete."
+              # --- Grant vaultadmin access to schema + objects ---
+              echo "🔐 Granting $VAULTADMIN_USER access to $OPENWEBUI_DB..."
+              ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
+              DO \$\$
+              BEGIN
+                GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $VAULTADMIN_USER;
+                GRANT USAGE ON SCHEMA public TO $VAULTADMIN_USER;
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $VAULTADMIN_USER;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $VAULTADMIN_USER;
+                GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $VAULTADMIN_USER;
 
-              while true; do
-                vault write yugabyte-db/config/yugabyte \
-                  plugin_name=postgresql-database-plugin \
-                  allowed_roles="openwebui" \
-                  connection_url="postgresql://{{username}}:{{password}}@$PGHOST:$PGPORT/openwebui?sslmode=disable" \
-                  username="vaultadmin" \
-                  password="$VAULTADMIN_PASSWORD" && break
-                echo "🔁 Retrying DB config write to Vault..."
-                sleep 3
-              done
-              echo "✅ Vault DB config written."
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $VAULTADMIN_USER;
 
-              # --- Create Vault DB role with fixed database name ---
-              vault delete yugabyte-db/roles/openwebui || true
-              echo "👤 Creating Vault DB role: openwebui"
-              while true; do
-                vault write yugabyte-db/roles/openwebui \
-                  db_name=yugabyte \
-                  creation_statements="
-                    CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
-                    GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
-                    GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
-                    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
-                    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
-                    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA openwebui TO \"{{name}}\";
-                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{name}}\";
-                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE ON SEQUENCES TO \"{{name}}\";
-                  " \
-                  default_ttl=24h \
-                  max_ttl=24h && break
-                echo "🔁 Retrying Vault DB role creation..."
-                sleep 3
-              done
-              echo "✅ Vault DB role 'openwebui' created."
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT USAGE ON SEQUENCES TO $VAULTADMIN_USER;
+              END
+              \$\$;
+              SQL
+              echo "✅ $VAULTADMIN_USER access confirmed"
 
-              # --- Write Vault policy ---
-              echo "📜 Writing Vault policy for 'openwebui'..."
-              cat <<EOF > /tmp/openwebui-policy.hcl
-              path "yugabyte-db/creds/openwebui" {
+              # --- Define dynamic Vault role for openwebui ---
+              echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
+              vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
+              vault write yugabyte-db/roles/$VAULT_ROLE \
+                db_name=yugabyte \
+                creation_statements="
+                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
+                  GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO \"{{name}}\";
+                  GRANT USAGE ON SCHEMA public TO \"{{name}}\";
+                  GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
+                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
+                  GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
+                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
+                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
+                " \
+                default_ttl=24h \
+                max_ttl=24h
+              echo "✅ Vault role '$VAULT_ROLE' created"
+
+              # --- Create Vault policy ---
+              echo "📜 Writing Vault policy '$VAULT_POLICY'..."
+              cat <<EOF | vault policy write "$VAULT_POLICY" -
+              path "yugabyte-db/creds/$VAULT_ROLE" {
                 capabilities = ["read"]
               }
               EOF
 
-              while true; do
-                vault policy write openwebui /tmp/openwebui-policy.hcl && break
-                echo "🔁 Retrying Vault policy write..."
-                sleep 3
-              done
-              echo "✅ Vault policy 'openwebui' created."
+              # --- Bind K8s service account to Vault role ---
+              echo "🔗 Binding Kubernetes SA to Vault role..."
+              vault write auth/kubernetes/role/$VAULT_ROLE \
+                bound_service_account_names="$VAULT_ROLE" \
+                bound_service_account_namespaces="ollama" \
+                policies="$VAULT_POLICY" \
+                ttl=24h
 
-              # --- Bind Kubernetes SA to Vault policy ---
-              echo "🔗 Binding Kubernetes service account to Vault policy..."
-              while true; do
-                vault write auth/kubernetes/role/openwebui \
-                  bound_service_account_names=openwebui \
-                  bound_service_account_namespaces=ollama \
-                  policies=openwebui \
-                  ttl=24h && break
-                echo "🔁 Retrying Kubernetes role binding..."
-                sleep 3
-              done
-              echo "✅ Vault K8s role binding complete."
-
-              # --- Verify: Try to generate credentials via Vault (dry run) ---
-              echo "🔎 Verifying Vault DB role access by requesting test credentials..."
-              while true; do
-                if vault read yugabyte-db/creds/openwebui >/dev/null 2>&1; then
-                  echo "✅ Verified: Vault can generate credentials for openwebui."
+              # --- Test credentials from Vault ---
+              echo "🔍 Testing Vault credential issuance..."
+              for i in {1..10}; do
+                if vault read yugabyte-db/creds/$VAULT_ROLE >/dev/null 2>&1; then
+                  echo "✅ Vault can issue dynamic credentials for $VAULT_ROLE"
                   break
                 fi
-                echo "🔁 Retrying test credential generation from Vault..."
-                sleep 3
+                echo "🔁 Retrying test credential issuance..."
+                sleep 2
               done
+
+              echo "🎉 openwebui Vault + Yugabyte initialization complete!"
 
           volumeMounts:
             - name: root-token
@@ -246,135 +225,6 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: create-openwebui-db
-  namespace: ollama
-spec:
-  backoffLimit: 1
-  template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
-    spec:
-      restartPolicy: Never
-
-      initContainers:
-        - name: inject-vault
-          image: hashicorp/vault:1.15.4
-          command: ["/bin/sh", "-c"]
-          args:
-            - cp /bin/vault /vault-bin/vault && chmod +x /vault-bin/vault
-          volumeMounts:
-            - name: vault-bin
-              mountPath: /vault-bin
-
-      containers:
-        - name: create-db
-          image: bitnami/postgresql:15
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              #!/bin/bash
-              set -euo pipefail
-
-              export PATH=$PATH:/vault-bin
-              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-
-              echo "🔄 Waiting for YugabyteDB to be ready..."
-
-              # Wait for DNS to resolve PGHOST
-              export PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
-              export PGPORT="5433"
-              while true; do
-                if getent hosts "$PGHOST" > /dev/null; then
-                  echo "✅ DNS resolved: $PGHOST"
-                  break
-                fi
-                echo "🔄 Waiting for DNS resolution of $PGHOST..."
-                sleep 3
-              done
-
-              # Wait for vault token file to exist and read it
-              while true; do
-                if [[ -f /vault-token/VAULT_TOKEN ]]; then
-                  export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-                  break
-                fi
-                echo "🔄 Waiting for Vault token file to appear..."
-                sleep 2
-              done
-
-              # Wait for secret to become available
-              while true; do
-                PGPASSWORD="$(vault kv get -field=value secret/vaultadmin 2>/dev/null || true)"
-                if [[ -n "$PGPASSWORD" ]]; then
-                  export PGPASSWORD
-                  echo "✅ Retrieved vaultadmin password from Vault"
-                  break
-                fi
-                echo "🔄 Waiting for Vault secret secret/vaultadmin..."
-                sleep 3
-              done
-
-              export PGUSER="vaultadmin"
-
-              # Wait for database to accept connections
-              i=1
-              while true; do
-                echo "⏳ Checking connection... ($i)"
-                if psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d yugabyte -c "SELECT 1;" >/dev/null 2>&1; then
-                  echo "✅ Connected to YugabyteDB."
-                  break
-                fi
-                sleep 3
-                i=$((i + 1))
-              done
-
-              # Ensure target database exists
-              while true; do
-                echo "🔍 Checking for 'openwebui' DB..."
-                EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'" || true)
-                if [[ "$EXISTS" == "1" ]]; then
-                  echo "✅ Database 'openwebui' already exists."
-                  break
-                fi
-
-                echo "📦 Creating database 'openwebui'..."
-                if createdb -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" openwebui 2>/dev/null; then
-                  echo "✅ Database 'openwebui' created."
-                  break
-                else
-                  echo "🔁 Failed to create database. Will retry..."
-                  sleep 3
-                fi
-              done
-
-              echo "✅ Job complete, exiting cleanly."
-              exit 0
-
-          resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
-          volumeMounts:
-            - name: vault-token
-              mountPath: /vault-token
-              readOnly: true
-            - name: vault-bin
-              mountPath: /vault-bin
-      volumes:
-        - name: vault-token
-          secret:
-            secretName: vault-root-token
-        - name: vault-bin
-          emptyDir: {}
-      serviceAccountName: default
 ---
 apiVersion: batch/v1
 kind: Job
