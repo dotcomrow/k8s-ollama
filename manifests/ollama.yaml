@@ -184,7 +184,6 @@ spec:
         linkerd.io/inject: disabled
     spec:
       restartPolicy: Never
-      ttlSecondsAfterFinished: 300
 
       initContainers:
         - name: inject-vault
