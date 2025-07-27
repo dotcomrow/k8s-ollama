@@ -507,6 +507,30 @@ metadata:
   name: openwebui
   namespace: ollama
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-writer
+  namespace: ollama
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: secret-writer-binding
+  namespace: ollama
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: ollama
+roleRef:
+  kind: Role
+  name: secret-writer
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -520,16 +544,18 @@ spec:
       restartPolicy: Never
       containers:
         - name: vault-sync
-          image: bitnami/kubectl:latest
+          image: ubuntu:22.04
           command: ["/bin/bash", "-c"]
           args:
             - |
-              echo "🔧 Installing vault + jq..."
-              apt update && apt install -y curl jq
+              echo "🔧 Installing tools..."
+              apt-get update && apt-get install -y curl unzip jq gnupg lsb-release apt-transport-https software-properties-common kubectl
 
-              echo "📌 Downloading Vault binary..."
-              curl -sLo /usr/local/bin/vault https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip && \
-                unzip /usr/local/bin/vault -d /usr/local/bin && chmod +x /usr/local/bin/vault
+              echo "📌 Installing Vault CLI..."
+              curl -sLo vault.zip https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip
+              unzip vault.zip
+              mv vault /usr/local/bin/
+              chmod +x /usr/local/bin/vault
 
               echo "📌 Fetching dynamic Vault credentials for openwebui..."
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
@@ -539,12 +565,11 @@ spec:
               USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
               PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
 
-              echo "✅ Got credentials: $USERNAME"
+              echo "✅ Got credentials for user: $USERNAME"
 
               DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui"
 
               echo "🔐 Creating/updating Kubernetes secret..."
-
               cat <<EOF | kubectl apply -f -
               apiVersion: v1
               kind: Secret
