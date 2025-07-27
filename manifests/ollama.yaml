@@ -516,14 +516,21 @@ spec:
   backoffLimit: 1
   template:
     spec:
-      serviceAccountName: default  # Make sure this SA can write Secrets
+      serviceAccountName: default
       restartPolicy: Never
       containers:
         - name: vault-sync
-          image: hashicorp/vault:1.15.4
-          command: ["/bin/sh", "-c"]
+          image: bitnami/kubectl:latest
+          command: ["/bin/bash", "-c"]
           args:
             - |
+              echo "🔧 Installing vault + jq..."
+              apt update && apt install -y curl jq
+
+              echo "📌 Downloading Vault binary..."
+              curl -sLo /usr/local/bin/vault https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip && \
+                unzip /usr/local/bin/vault -d /usr/local/bin && chmod +x /usr/local/bin/vault
+
               echo "📌 Fetching dynamic Vault credentials for openwebui..."
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
               export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
@@ -548,14 +555,6 @@ spec:
               stringData:
                 DATABASE_URL: ${DB_URL}
               EOF
-
-              echo "✅ Secret created."
-          env:
-            - name: VAULT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: vault-root-token
-                  key: VAULT_TOKEN
           resources:
             requests:
               cpu: "50m"
@@ -563,14 +562,14 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
-          volumeMounts:
-            - name: vault-token
-              mountPath: /vault-token
-              readOnly: true
       volumes:
         - name: vault-token
           secret:
             secretName: vault-root-token
+      volumeMounts:
+        - name: vault-token
+          mountPath: /vault-token
+          readOnly: true
 ---
 apiVersion: apps/v1
 kind: Deployment
