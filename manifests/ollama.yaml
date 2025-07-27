@@ -194,23 +194,19 @@ spec:
 
       containers:
         - name: create-db
-          image: postgres:15  # Or any recent version
-          command: ["/bin/sh", "-c"]
+          image: bitnami/postgresql:15
+          command: ["/bin/bash", "-c"]
           args:
             - |
+              set -euo pipefail
               echo "🔄 Waiting for YugabyteDB to be ready..."
               export PATH=$PATH:/vault-bin
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-              VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-              export VAULT_TOKEN
-
-              VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin)
-
-              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
-              PGPORT=5433
-              PGUSER=vaultadmin
-              PGPASSWORD="$VAULTADMIN_PASSWORD"
-              export PGPASSWORD
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
+              export PGPASSWORD=$(vault kv get -field=value secret/vaultadmin)
+              export PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+              export PGPORT=5433
+              export PGUSER=vaultadmin
 
               i=1
               while true; do
@@ -223,41 +219,18 @@ spec:
               done
 
               echo "✅ Connected. Checking for 'openwebui' DB..."
-              echo "🔍 Checking if 'openwebui' database exists..."
-              EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'" 2>&1)
-              EXIT_CODE=$?
-
-              echo "📝 psql output: $EXISTS"
-              if [ "$EXIT_CODE" -ne 0 ]; then
-                echo "❌ Error checking database existence: $EXISTS"
-                exit 1
-              fi
-
+              EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'")
               if [ "$EXISTS" != "1" ]; then
                 echo "📦 Creating database 'openwebui'..."
-                CREATE_OUT=$(createdb -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" openwebui 2>&1)
-                CREATE_EXIT=$?
-
-                if [ "$CREATE_EXIT" -ne 0 ]; then
-                  echo "❌ Failed to create database: $CREATE_OUT"
-                  exit 1
-                fi
-
-                echo "✅ Database 'openwebui' created successfully."
-
-                # Re-check existence
-                RECHECK=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'" 2>&1)
-                if echo "$RECHECK" | grep -q "1"; then
-                  echo "✅ Verified: 'openwebui' exists after creation."
-                else
-                  echo "⚠️  Creation attempted but database not found on recheck. Output: $RECHECK"
-                  exit 1
-                fi
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" openwebui
+                echo "✅ Created."
               else
-                echo "✅ Database 'openwebui' already exists."
+                echo "✅ Already exists."
               fi
 
+              echo "✅ Job complete, exiting cleanly."
               exit 0
+
           resources:
             requests:
               cpu: "50m"
