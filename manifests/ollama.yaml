@@ -81,7 +81,7 @@ spec:
                   export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
                   break
                 fi
-                echo "🔄 Waiting for Vault token file..."
+                echo "🔁 Waiting for Vault token file..."
                 sleep 2
               done
 
@@ -93,14 +93,14 @@ spec:
                   echo "✅ DNS resolved for $PGHOST"
                   break
                 fi
-                echo "🔄 Waiting for DNS to resolve $PGHOST..."
+                echo "🔁 Waiting for DNS to resolve $PGHOST..."
                 sleep 3
               done
 
               # Wait for TCP port to be reachable
               echo "⏳ Waiting for YugabyteDB to become available at $PGHOST:$PGPORT..."
               while ! nc -z -w 1 "$PGHOST" "$PGPORT"; do
-                echo "🔄 Still waiting for Yugabyte..."
+                echo "🔁 Still waiting for Yugabyte..."
                 sleep 3
               done
               echo "✅ YugabyteDB is available."
@@ -113,7 +113,7 @@ spec:
                   echo "✅ Vault admin password retrieved."
                   break
                 fi
-                echo "🔄 Waiting for secret/vaultadmin to be available in Vault..."
+                echo "🔁 Waiting for secret/vaultadmin to be available in Vault..."
                 sleep 3
               done
 
@@ -123,6 +123,39 @@ spec:
                 echo "❌ Failed to install PostgreSQL client"
                 exit 1
               }
+
+              # --- Grant vaultadmin privileges on schema and tables ---
+              echo "🏡 Granting vaultadmin privileges on schema openwebui and its tables..."
+              while true; do
+                PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" <<EOSQL && break
+              DO \$\$
+              BEGIN
+                BEGIN
+                  EXECUTE 'GRANT CONNECT ON DATABASE openwebui TO vaultadmin';
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+
+                BEGIN
+                  EXECUTE 'GRANT USAGE ON SCHEMA openwebui TO vaultadmin';
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+
+                BEGIN
+                  EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO vaultadmin';
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+
+                BEGIN
+                  EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin';
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+              END
+              \$\$;
+              EOSQL
+                echo "🔁 Retrying grants to vaultadmin..."
+                sleep 3
+              done
+              echo "✅ Granted vaultadmin privileges."
 
               # --- Reconfigure Vault DB secrets engine connection ---
               echo "⚙️ Reconfiguring Vault DB connection (path: yugabyte-db/config/yugabyte)..."
@@ -135,7 +168,7 @@ spec:
                   connection_url="postgresql://{{username}}:{{password}}@$PGHOST:$PGPORT/openwebui?sslmode=disable" \
                   username="vaultadmin" \
                   password="$VAULTADMIN_PASSWORD" && break
-                echo "🔄 Retrying DB config write to Vault..."
+                echo "🔁 Retrying DB config write to Vault..."
                 sleep 3
               done
               echo "✅ Vault DB config written."
@@ -148,31 +181,22 @@ spec:
                   creation_statements="
                     CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
                     GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
-
                     GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
-
-                    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE openwebui.migratehistory TO \"{{name}}\";
-
-                    GRANT USAGE ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
-
+                    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
+                    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
                     GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA openwebui TO \"{{name}}\";
-
-                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{name}}\";
-
-                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT USAGE ON SEQUENCES TO \"{{name}}\";
-
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{name}}\";
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE ON SEQUENCES TO \"{{name}}\";
                   " \
                   default_ttl=24h \
                   max_ttl=24h && break
-                echo "🔄 Retrying Vault DB role creation..."
+                echo "🔁 Retrying Vault DB role creation..."
                 sleep 3
               done
               echo "✅ Vault DB role 'openwebui' created."
 
               # --- Write Vault policy ---
-              echo "📝 Writing Vault policy for 'openwebui'..."
+              echo "📜 Writing Vault policy for 'openwebui'..."
               cat <<EOF > /tmp/openwebui-policy.hcl
               path "yugabyte-db/creds/openwebui" {
                 capabilities = ["read"]
@@ -181,7 +205,7 @@ spec:
 
               while true; do
                 vault policy write openwebui /tmp/openwebui-policy.hcl && break
-                echo "🔄 Retrying Vault policy write..."
+                echo "🔁 Retrying Vault policy write..."
                 sleep 3
               done
               echo "✅ Vault policy 'openwebui' created."
@@ -194,7 +218,7 @@ spec:
                   bound_service_account_namespaces=ollama \
                   policies=openwebui \
                   ttl=24h && break
-                echo "🔄 Retrying Kubernetes role binding..."
+                echo "🔁 Retrying Kubernetes role binding..."
                 sleep 3
               done
               echo "✅ Vault K8s role binding complete."
@@ -206,7 +230,7 @@ spec:
                   echo "✅ Verified: Vault can generate credentials for openwebui."
                   break
                 fi
-                echo "🔄 Retrying test credential generation from Vault..."
+                echo "🔁 Retrying test credential generation from Vault..."
                 sleep 3
               done
 
