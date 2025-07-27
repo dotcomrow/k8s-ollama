@@ -119,29 +119,29 @@ spec:
 
               # --- Ensure psql is available ---
               echo "🔧 Ensuring PostgreSQL client is installed..."
-              apk add  postgresql-client || {
+              apk add postgresql-client || {
                 echo "❌ Failed to install PostgreSQL client"
                 exit 1
               }
+
+              # --- Wait for openwebui schema and table to exist ---
+              echo "⏳ Waiting for openwebui.migratehistory to be present..."
+              while true; do
+                if PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" \
+                  -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema = 'openwebui' AND table_name = 'migratehistory'" | grep -q 1; then
+                  echo "✅ Found openwebui.migratehistory table."
+                  break
+                fi
+                echo "🔄 Waiting for table 'openwebui.migratehistory'..."
+                sleep 3
+              done
 
               # --- Grant permissions to vaultadmin on migratehistory ---
               echo "🛡️ Granting vaultadmin privileges on openwebui.migratehistory..."
               while true; do
                 PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" <<EOSQL && break
-              DO \$\$
-              BEGIN
-                IF NOT EXISTS (
-                  SELECT 1
-                  FROM information_schema.role_table_grants
-                  WHERE grantee = 'vaultadmin'
-                    AND table_schema = 'openwebui'
-                    AND table_name = 'migratehistory'
-                ) THEN
-                  EXECUTE 'GRANT USAGE ON SCHEMA openwebui TO vaultadmin';
-                  EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE openwebui.migratehistory TO vaultadmin';
-                END IF;
-              END;
-              \$\$;
+                  GRANT USAGE ON SCHEMA openwebui TO vaultadmin;
+                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE openwebui.migratehistory TO vaultadmin;
               EOSQL
                 echo "🔄 Retrying grant on openwebui.migratehistory..."
                 sleep 3
