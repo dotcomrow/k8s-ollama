@@ -591,10 +591,10 @@ spec:
         - name: vault-token
           secret:
             secretName: vault-root-token
-      volumeMounts:
-        - name: vault-token
-          mountPath: /vault-token
-          readOnly: true
+    volumeMounts:
+      - name: vault-token
+        mountPath: /vault-token
+        readOnly: true
 ---
 apiVersion: apps/v1
 kind: Deployment
