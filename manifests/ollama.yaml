@@ -124,30 +124,6 @@ spec:
                 exit 1
               }
 
-              # --- Wait for openwebui schema and table to exist ---
-              echo "⏳ Waiting for openwebui.migratehistory to be present..."
-              while true; do
-                if PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" \
-                  -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema = 'openwebui' AND table_name = 'migratehistory'" | grep -q 1; then
-                  echo "✅ Found openwebui.migratehistory table."
-                  break
-                fi
-                echo "🔄 Waiting for table 'openwebui.migratehistory'..."
-                sleep 3
-              done
-
-              # --- Grant permissions to vaultadmin on migratehistory ---
-              echo "🛡️ Granting vaultadmin privileges on openwebui.migratehistory..."
-              while true; do
-                PGPASSWORD="$VAULTADMIN_PASSWORD" psql "host=$PGHOST port=$PGPORT dbname=openwebui user=vaultadmin" <<EOSQL && break
-                  GRANT USAGE ON SCHEMA openwebui TO vaultadmin;
-                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE openwebui.migratehistory TO vaultadmin;
-              EOSQL
-                echo "🔄 Retrying grant on openwebui.migratehistory..."
-                sleep 3
-              done
-              echo "✅ Granted privileges on openwebui.migratehistory to vaultadmin."
-
               # --- Reconfigure Vault DB secrets engine connection ---
               echo "⚙️ Reconfiguring Vault DB connection (path: yugabyte-db/config/yugabyte)..."
               vault delete yugabyte-db/config/yugabyte || echo "ℹ️ No previous config to delete."
@@ -175,9 +151,9 @@ spec:
 
                     GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
 
-                    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE openwebui.migratehistory TO \"{{name}}\";
 
-                    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
+                    GRANT USAGE ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
 
                     GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA openwebui TO \"{{name}}\";
 
