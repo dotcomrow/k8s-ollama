@@ -507,6 +507,71 @@ metadata:
   name: openwebui
   namespace: ollama
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-openwebui-db-secret
+  namespace: ollama
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      serviceAccountName: default  # Make sure this SA can write Secrets
+      restartPolicy: Never
+      containers:
+        - name: vault-sync
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "📌 Fetching dynamic Vault credentials for openwebui..."
+              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
+
+              CREDS_JSON=$(vault read -format=json yugabyte-db/creds/openwebui)
+              USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
+              PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
+
+              echo "✅ Got credentials: $USERNAME"
+
+              DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui"
+
+              echo "🔐 Creating/updating Kubernetes secret..."
+
+              cat <<EOF | kubectl apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: openwebui-db-url
+                namespace: ollama
+              type: Opaque
+              stringData:
+                DATABASE_URL: ${DB_URL}
+              EOF
+
+              echo "✅ Secret created."
+          env:
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-root-token
+                  key: VAULT_TOKEN
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault-token
+              readOnly: true
+      volumes:
+        - name: vault-token
+          secret:
+            secretName: vault-root-token
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -535,13 +600,13 @@ spec:
               value: "http://ollama.ollama.svc.cluster.local:11434"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
+          envFrom:
+            - secretRef:
+                name: openwebui-db-url
           command: ["/bin/sh"]
           args:
             - -c
             - |
-              echo "📌 Sourcing injected Vault secrets..."
-              . /vault/secrets/db-env
-              echo "Using DATABASE_URL=$DATABASE_URL"
               exec /app/backend/start.sh
           lifecycle:
             postStart:
