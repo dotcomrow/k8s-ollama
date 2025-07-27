@@ -101,7 +101,7 @@ spec:
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 allowed_roles="openwebui" \
-                connection_url="postgresql://{{username}}:{{password}}@$PGHOST:$PGPORT/yugabyte?sslmode=disable" \
+                connection_url="postgresql://{{username}}:{{password}}@$PGHOST:$PGPORT/openwebui?sslmode=disable" \
                 username="vaultadmin" \
                 password="$VAULTADMIN_PASSWORD" || {
                   echo "❌ Failed to write DB config!"
@@ -113,12 +113,10 @@ spec:
               echo "👤 Creating Vault DB role: openwebui"
               vault write yugabyte-db/roles/openwebui \
                 db_name=yugabyte \
-                default_db=openwebui \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
                   GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
                   GRANT USAGE, CREATE ON SCHEMA public TO \"{{name}}\";
-                  GRANT ALL PRIVILEGES ON DATABASE openwebui TO \"{{name}}\";
                 " \
                 default_ttl=24h \
                 max_ttl=24h || {
