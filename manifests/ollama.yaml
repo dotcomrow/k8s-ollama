@@ -256,6 +256,8 @@ spec:
               else
                 echo "✅ Database 'openwebui' already exists."
               fi
+
+              exit 0
           resources:
             requests:
               cpu: "50m"
