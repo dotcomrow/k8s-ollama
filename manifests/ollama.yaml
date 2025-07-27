@@ -645,29 +645,6 @@ spec:
           envFrom:
             - secretRef:
                 name: openwebui-db-url
-          command: ["/bin/sh"]
-          args:
-            - -c
-            - |
-              exec /app/backend/start.sh
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    echo "⏳ Waiting for Vault Agent to render secrets..."
-                    i=1
-                    while true; do
-                      if grep -q DATABASE_URL /vault/secrets/db-env; then
-                        echo "✅ Secrets ready!"
-                        break
-                      fi
-                      echo "⏳ Still waiting... ($i)"
-                      i=$((i + 1))
-                      sleep 2
-                    done
           resources:
             requests:
               cpu: "500m"
