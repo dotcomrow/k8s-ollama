@@ -721,6 +721,9 @@ metadata:
   namespace: ollama
   labels:
     app: open-webui
+  annotations:
+    reloader.stakater.com/auto: "true"
+    reloader.stakater.com/secret: "openwebui-db-url"
 spec:
   replicas: 1
   selector:
