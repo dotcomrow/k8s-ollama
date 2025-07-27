@@ -681,16 +681,16 @@ spec:
 
                   echo "🔐 Creating/updating Kubernetes secret..."
                   while true; do
-                    cat <<EOF | kubectl apply -f - && break
-                    apiVersion: v1
-                    kind: Secret
-                    metadata:
-                      name: openwebui-db-url
-                      namespace: ollama
-                    type: Opaque
-                    stringData:
-                      DATABASE_URL: ${DB_URL}
-                    EOF
+                  cat <<EOF | kubectl apply -f - && break
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: openwebui-db-url
+                    namespace: ollama
+                  type: Opaque
+                  stringData:
+                    DATABASE_URL: ${DB_URL}
+                  EOF
                     echo "⚠️ Failed to create secret. Retrying in ${RETRY_INTERVAL}s..."
                     sleep "$RETRY_INTERVAL"
                   done
