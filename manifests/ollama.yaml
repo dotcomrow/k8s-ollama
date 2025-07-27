@@ -117,6 +117,13 @@ spec:
                 sleep 3
               done
 
+              # --- Ensure psql is available ---
+              echo "🔧 Ensuring PostgreSQL client is installed..."
+              apk add  postgresql-client || {
+                echo "❌ Failed to install PostgreSQL client"
+                exit 1
+              }
+
               # --- Grant permissions to vaultadmin on migratehistory ---
               echo "🛡️ Granting vaultadmin privileges on openwebui.migratehistory..."
               while true; do
