@@ -182,10 +182,36 @@ spec:
               done
 
               echo "✅ Connected. Checking for 'openwebui' DB..."
-              EXISTS=$(psql -h $PGHOST -p $PGPORT -U $PGUSER -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'")
+              echo "🔍 Checking if 'openwebui' database exists..."
+              EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'" 2>&1)
+              EXIT_CODE=$?
+
+              echo "📝 psql output: $EXISTS"
+              if [ "$EXIT_CODE" -ne 0 ]; then
+                echo "❌ Error checking database existence: $EXISTS"
+                exit 1
+              fi
+
               if [ "$EXISTS" != "1" ]; then
                 echo "📦 Creating database 'openwebui'..."
-                createdb -h $PGHOST -p $PGPORT -U $PGUSER openwebui
+                CREATE_OUT=$(createdb -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" openwebui 2>&1)
+                CREATE_EXIT=$?
+
+                if [ "$CREATE_EXIT" -ne 0 ]; then
+                  echo "❌ Failed to create database: $CREATE_OUT"
+                  exit 1
+                fi
+
+                echo "✅ Database 'openwebui' created successfully."
+
+                # Re-check existence
+                RECHECK=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -tAc "SELECT 1 FROM pg_database WHERE datname='openwebui'" 2>&1)
+                if echo "$RECHECK" | grep -q "1"; then
+                  echo "✅ Verified: 'openwebui' exists after creation."
+                else
+                  echo "⚠️  Creation attempted but database not found on recheck. Output: $RECHECK"
+                  exit 1
+                fi
               else
                 echo "✅ Database 'openwebui' already exists."
               fi
