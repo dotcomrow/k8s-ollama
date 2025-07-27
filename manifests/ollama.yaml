@@ -116,6 +116,8 @@ spec:
                 default_db=openwebui \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
+                  GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
+                  GRANT USAGE, CREATE ON SCHEMA public TO \"{{name}}\";
                   GRANT ALL PRIVILEGES ON DATABASE openwebui TO \"{{name}}\";
                 " \
                 default_ttl=24h \
