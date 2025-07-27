@@ -173,21 +173,19 @@ spec:
                     CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
                     GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
 
-                    GRANT USAGE ON SCHEMA public TO \"{{name}}\";
-                    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
-                    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
-
-                    -- Grant on the correct schema
                     GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
 
-                    -- Grant all privileges on all tables in that schema
                     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
 
-                    -- (Optional but recommended)
                     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
 
-                    -- (Optional) If migrations create functions, views, etc.
                     GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA openwebui TO \"{{name}}\";
+
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{name}}\";
+
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT USAGE ON SEQUENCES TO \"{{name}}\";
 
                   " \
                   default_ttl=24h \
