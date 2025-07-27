@@ -587,14 +587,14 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault-token
+              readOnly: true
       volumes:
         - name: vault-token
           secret:
             secretName: vault-root-token
-    volumeMounts:
-      - name: vault-token
-        mountPath: /vault-token
-        readOnly: true
 ---
 apiVersion: apps/v1
 kind: Deployment
