@@ -124,6 +124,11 @@ spec:
                 echo "✅ Database $OPENWEBUI_DB already exists"
               fi
 
+              # Download YSQLSH manually in the script (temporary solution)
+              YB_CLIENT_VERSION="2.18.1.0"
+              curl -sL https://downloads.yugabyte.com/yugabyte-client-${YB_CLIENT_VERSION}-linux.tar.gz | tar -xz -C /tmp
+              export PATH=/tmp/yugabyte-client-${YB_CLIENT_VERSION}/bin:$PATH
+
               # --- Create openwebui user and grant access ---
               echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
               ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
