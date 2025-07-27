@@ -545,6 +545,17 @@ spec:
     spec:
       serviceAccountName: default
       restartPolicy: Never
+
+      initContainers:
+        - name: load-kubectl
+          image: bitnami/kubectl:latest
+          command: ["sh", "-c"]
+          args:
+            - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+          volumeMounts:
+            - name: kubectl-bin
+              mountPath: /kubectl-bin
+
       containers:
         - name: vault-sync
           image: ubuntu:22.04
@@ -594,10 +605,14 @@ spec:
             - name: vault-token
               mountPath: /vault-token
               readOnly: true
+            - name: kubectl-bin
+              mountPath: /usr/local/bin
       volumes:
         - name: vault-token
           secret:
             secretName: vault-root-token
+        - name: kubectl-bin
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
