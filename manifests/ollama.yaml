@@ -67,32 +67,50 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              #!/bin/bash
+              set -e
+
               echo "📌 Creating Vault policy and role for openwebui..."
+
+              # --- Setup environment ---
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
               export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
-              while true; do
-                nc -z -w 1 "${PGHOST}" "${PGPORT}" >/dev/null 2>&1 && break
+
+              # --- Wait for YugabyteDB to be available ---
+              echo "⏳ Waiting for YugabyteDB to become available at $PGHOST:$PGPORT..."
+              while ! nc -z -w 1 "$PGHOST" "$PGPORT"; do
                 echo "🔄 Still waiting for Yugabyte..."
                 sleep 5
               done
               echo "✅ YugabyteDB is available."
 
-              VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin)
-              echo "Using Vault admin password: $VAULTADMIN_PASSWORD"
+              # --- Get Vault admin password ---
+              echo "🔐 Fetching Vault admin password from secret/vaultadmin..."
+              if ! VAULTADMIN_PASSWORD=$(vault kv get -field=value secret/vaultadmin); then
+                echo "❌ Failed to retrieve Vault admin password!"
+                exit 1
+              fi
+              echo "🔐 Vault admin password retrieved."
 
-              # ✅ Configure the DB connection with allowed_roles
-              vault delete yugabyte-db/config/yugabyte
+              # --- Reconfigure Vault DB secrets engine connection ---
+              echo "⚙️ Reconfiguring Vault DB connection (path: yugabyte-db/config/yugabyte)..."
+              vault delete yugabyte-db/config/yugabyte || echo "ℹ️ No previous config to delete."
+
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 allowed_roles="openwebui" \
-                connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
+                connection_url="postgresql://{{username}}:{{password}}@$PGHOST:$PGPORT/yugabyte?sslmode=disable" \
                 username="vaultadmin" \
-                password="$VAULTADMIN_PASSWORD"
+                password="$VAULTADMIN_PASSWORD" || {
+                  echo "❌ Failed to write DB config!"
+                  exit 1
+              }
+              echo "✅ Vault DB config written."
 
-              # ✅ Create the Vault DB role
+              # --- Create Vault DB role ---
+              echo "👤 Creating Vault DB role: openwebui"
               vault write yugabyte-db/roles/openwebui \
                 db_name=yugabyte \
                 creation_statements="
@@ -100,23 +118,45 @@ spec:
                   GRANT ALL PRIVILEGES ON DATABASE openwebui TO \"{{name}}\";
                 " \
                 default_ttl=24h \
-                max_ttl=24h
+                max_ttl=24h || {
+                  echo "❌ Failed to create role openwebui!"
+                  exit 1
+              }
+              echo "✅ Vault DB role 'openwebui' created."
 
-              # ✅ Upload Vault policy
-              cat <<EOF > openwebui-policy.hcl
+              # --- Write Vault policy ---
+              echo "📝 Writing Vault policy for 'openwebui'..."
+              cat <<EOF > /tmp/openwebui-policy.hcl
               path "yugabyte-db/creds/openwebui" {
                 capabilities = ["read"]
               }
               EOF
 
-              vault policy write openwebui openwebui-policy.hcl
+              vault policy write openwebui /tmp/openwebui-policy.hcl || {
+                echo "❌ Failed to write Vault policy!"
+                exit 1
+              }
+              echo "✅ Vault policy 'openwebui' created."
 
-              # ✅ Bind Kubernetes SA to the policy
+              # --- Bind Kubernetes SA to Vault policy ---
+              echo "🔗 Binding Kubernetes service account to Vault policy..."
               vault write auth/kubernetes/role/openwebui \
                 bound_service_account_names=openwebui \
                 bound_service_account_namespaces=ollama \
                 policies=openwebui \
-                ttl=24h
+                ttl=24h || {
+                  echo "❌ Failed to create Vault K8s role binding!"
+                  exit 1
+              }
+              echo "✅ Vault K8s role binding complete."
+
+              # --- Verify: Try to generate credentials via Vault (dry run) ---
+              echo "🔎 Verifying Vault DB role access by requesting test credentials..."
+              vault read yugabyte-db/creds/openwebui || {
+                echo "❌ Failed to read creds for 'openwebui'. Check Vault logs."
+                exit 1
+              }
+              echo "✅ Verified: Vault can generate credentials for openwebui."
 
           volumeMounts:
             - name: root-token
