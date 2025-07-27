@@ -563,7 +563,7 @@ spec:
           args:
             - |
               echo "🔧 Installing tools..."
-              apt-get update && apt-get install -y curl unzip jq gnupg lsb-release apt-transport-https software-properties-common kubectl
+              apt-get update && apt-get install -y curl unzip jq gnupg lsb-release apt-transport-https software-properties-common
 
               echo "📌 Installing Vault CLI..."
               curl -sLo vault.zip https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip
