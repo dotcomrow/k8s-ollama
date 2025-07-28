@@ -202,8 +202,10 @@ spec:
                   GRANT USAGE ON SCHEMA public TO \"{{name}}\";
                   GRANT CREATE ON SCHEMA public TO \"{{name}}\";
                   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
-                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
+                  GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
+                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
+                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"{{name}}\";
                 " \
                 default_ttl="24h" \
                 max_ttl="24h"
@@ -225,15 +227,39 @@ spec:
                 policies="$VAULT_POLICY" \
                 ttl=24h
 
-              # --- Test credentials from Vault ---
-              echo "🔍 Testing Vault credential issuance..."
+              echo "🔍 Testing Vault credential issuance and DB permissions..."
               while true; do
-                if vault read yugabyte-db/creds/$VAULT_ROLE >/dev/null 2>&1; then
-                  echo "✅ Vault can issue dynamic credentials for $VAULT_ROLE"
+                CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$VAULT_ROLE 2>/dev/null)
+                if [ $? -ne 0 ]; then
+                  echo "🔁 Retrying test credential issuance..."
+                  sleep 2
+                  continue
+                fi
+
+                DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
+                DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
+
+                export PGPASSWORD="$DB_PASS"
+
+                echo "🔎 Testing DB permissions for dynamic user: $DB_USER"
+                TEST_RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
+                                  -U "$DB_USER" \
+                                  -d openwebui \
+                                  -tAc "
+                                  CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL);
+                                  INSERT INTO test_perm_check DEFAULT VALUES;
+                                  SELECT * FROM test_perm_check;
+                                  DROP TABLE test_perm_check;" 2>&1)
+
+                if echo "$TEST_RESULT" | grep -qiE "error|permission denied|FATAL"; then
+                  echo "❌ Permission test failed for $DB_USER:"
+                  echo "$TEST_RESULT"
+                  echo "🔁 Retrying test credential issuance and DB access..."
+                  sleep 2
+                else
+                  echo "✅ Permission test passed for dynamic user: $DB_USER"
                   break
                 fi
-                echo "🔁 Retrying test credential issuance..."
-                sleep 2
               done
 
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
