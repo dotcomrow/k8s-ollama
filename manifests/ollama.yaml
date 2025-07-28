@@ -251,7 +251,10 @@ spec:
                 # Run it with debug environment and output to log
                 echo "💻 Running with PGPASSWORD set $PGPASSWORD"
                 env PGPASSWORD="$PGPASSWORD" bash -c "$PSQL_CMD" 2>&1 | tee /tmp/psql_output.log
-                STATUS=${PIPESTATUS[0]}
+                set +e
+                env PGPASSWORD="$PGPASSWORD" bash -c "$PSQL_CMD" 2>&1 | tee /tmp/psql_output.log
+                STATUS=$?
+                set -e
 
                 echo "🔎 Exit status: $STATUS"
                 if [ "$STATUS" -ne 0 ]; then
