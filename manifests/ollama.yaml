@@ -78,7 +78,7 @@ spec:
               YB_PLATFORM=linux
               YB_TARBALL=yugabyte-$YB_VERSION-$YB_PLATFORM.tar.gz
 
-              curl -LO https://downloads.yugabyte.com/$YB_TARBALL
+              curl -fL -o $YB_TARBALL https://downloads.yugabyte.com/$YB_TARBALL
               tar -xzf $YB_TARBALL
               mv yugabyte-$YB_VERSION /opt/yugabyte
               export PATH=/opt/yugabyte/bin:$PATH
