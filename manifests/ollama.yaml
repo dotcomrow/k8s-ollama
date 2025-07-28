@@ -273,10 +273,11 @@ spec:
                 # Then try connecting
                 run_psql "SELECT current_user;"
                 run_psql "SELECT has_schema_privilege('$DB_USER', 'public', 'USAGE') AS has_usage,
-                                has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create,
-                                has_schema_privilege('$DB_USER', 'public', 'ALL') AS has_all;"
+                                has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create;"
 
                 run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
+                run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
+                run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'INSERT,SELECT,UPDATE,DELETE') AS table_access;"
                 run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
                 echo "✅ Permission test succeeded."
 
