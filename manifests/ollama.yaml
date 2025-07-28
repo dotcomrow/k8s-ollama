@@ -228,28 +228,40 @@ spec:
                 ttl=24h
 
               echo "🔍 Testing Vault credential issuance and DB permissions..."
-              while true; do
-                CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$VAULT_ROLE 2>/dev/null)
-                if [ $? -ne 0 ]; then
-                  echo "🔁 Retrying test credential issuance..."
-                  sleep 2
-                  continue
+              CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$VAULT_ROLE 2>/dev/null)
+              if [ $? -ne 0 ]; then
+                echo "🔁 Retrying test credential issuance..."
+                sleep 2
+                continue
+              fi
+
+              DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
+              DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
+
+              export PGPASSWORD="$DB_PASS"
+
+              function run_psql() {
+                local SQL="$1"
+                echo "🔎 Running: $SQL"
+                RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
+                              -U "$DB_USER" \
+                              -d openwebui \
+                              -tAc "$SQL" 2>&1)
+                STATUS=$?
+                echo "$RESULT"
+                if [ "$STATUS" -ne 0 ]; then
+                  echo "❌ ERROR running: $SQL"
+                  exit 1
                 fi
+              }
 
-                DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
-                DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
-
-                export PGPASSWORD="$DB_PASS"
-
+              while true; do
                 echo "🔎 Testing DB permissions for dynamic user: $DB_USER"
-                TEST_RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
-                                  -U "$DB_USER" \
-                                  -d openwebui \
-                                  -tAc "
-                                  CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL);
-                                  INSERT INTO test_perm_check DEFAULT VALUES;
-                                  SELECT * FROM test_perm_check;
-                                  DROP TABLE test_perm_check;" 2>&1)
+                run_psql "CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL);"
+                run_psql "INSERT INTO test_perm_check DEFAULT VALUES;"
+                run_psql "SELECT * FROM test_perm_check;"
+                run_psql "DROP TABLE test_perm_check;"
+                echo "✅ Permission test succeeded."
 
                 if echo "$TEST_RESULT" | grep -qiE "error|permission denied|FATAL"; then
                   echo "❌ Permission test failed for $DB_USER:"
