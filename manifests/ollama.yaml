@@ -194,7 +194,7 @@ spec:
               # --- Define dynamic Vault role for openwebui ---
               echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
               vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
-              vault write yugabyte-db/roles/openwebui \
+              vault write yugabyte-db/roles/$VAULT_ROLE \
                 db_name=yugabyte \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
@@ -205,7 +205,6 @@ spec:
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO \"{{name}}\";
-                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO \"{{name}}\";
                 " \
                 default_ttl="24h" \
                 max_ttl="24h"
