@@ -195,7 +195,7 @@ spec:
               echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
               vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
               vault write yugabyte-db/roles/$VAULT_ROLE \
-                db_name=$VAULT_ROLE \
+                db_name=yugabyte \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
                   GRANT CONNECT ON DATABASE \"$VAULT_ROLE\" TO \"{{name}}\";
