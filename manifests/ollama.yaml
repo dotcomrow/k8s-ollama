@@ -205,7 +205,7 @@ spec:
                   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
-                  ALTER DEFAULT_PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
+                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
                 " \
                 default_ttl=24h \
                 max_ttl=24h
