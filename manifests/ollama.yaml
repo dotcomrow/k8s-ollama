@@ -272,6 +272,30 @@ spec:
                 kubectl apply -f -
               echo "✅ Secret copied successfully."
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-creator
+  namespace: ollama
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-creator-binding
+  namespace: ollama
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: vault
+roleRef:
+  kind: Role
+  name: job-creator
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -316,7 +340,12 @@ spec:
             - /bin/sh
             - -c
             - |
-              kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama
+              echo "🔁 Triggering sync-openwebui-db-secret-now from CronJob..."
+              until kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama; do
+                echo "⏳ Waiting for CronJob to be available..."
+                sleep 3
+              done
+              echo "✅ Job successfully created"
 ---
 apiVersion: apps/v1
 kind: Deployment
