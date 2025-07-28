@@ -272,7 +272,7 @@ spec:
                 sleep 3
 
                 # Then try connecting
-                run_psql "\\conninfo"
+                run_psql "SELECT current_user;"  # Forces actual SQL parsing
                 run_psql "CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL);"
                 run_psql "INSERT INTO test_perm_check DEFAULT VALUES;"
                 run_psql "SELECT * FROM test_perm_check;"
