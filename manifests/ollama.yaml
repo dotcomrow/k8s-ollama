@@ -72,12 +72,8 @@ spec:
 
               echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
 
-              apk add --no-cache bash curl libpq
-              # Replace with the version you're using
-              YB_VER=2.25.2.0
-              curl -fL https://downloads.yugabyte.com/releases/$YB_VER/yugabyte-$YB_VER-linux.tar.gz | tar xz
-              cp yugabyte-$YB_VER/bin/ysqlsh /usr/local/bin/
-              chmod +x /usr/local/bin/ysqlsh
+              # Install PostgreSQL client tools
+              apk add --no-cache bash curl postgresql15-client
 
               # --- Constants ---
               export PATH=$PATH:/vault-bin
@@ -123,7 +119,7 @@ spec:
 
               # --- Ensure openwebui database exists ---
               echo "📦 Checking if $OPENWEBUI_DB exists..."
-              DB_EXISTS=$(ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'")
+              DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'")
               if [[ "$DB_EXISTS" != "1" ]]; then
                 echo "📦 Creating database $OPENWEBUI_DB..."
                 createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$OPENWEBUI_DB"
@@ -131,14 +127,9 @@ spec:
                 echo "✅ Database $OPENWEBUI_DB already exists"
               fi
 
-              # Download YSQLSH manually in the script (temporary solution)
-              YB_CLIENT_VERSION="2.18.1.0"
-              curl -sL https://downloads.yugabyte.com/yugabyte-client-${YB_CLIENT_VERSION}-linux.tar.gz | tar -xz -C /tmp
-              export PATH=/tmp/yugabyte-client-${YB_CLIENT_VERSION}/bin:$PATH
-
               # --- Create openwebui user and grant access ---
               echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
-              ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
               DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OPENWEBUI_USER') THEN
@@ -159,7 +150,7 @@ spec:
 
               # --- Grant vaultadmin access to schema + objects ---
               echo "🔐 Granting $VAULTADMIN_USER access to $OPENWEBUI_DB..."
-              ysqlsh -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
               DO \$\$
               BEGIN
                 GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $VAULTADMIN_USER;
