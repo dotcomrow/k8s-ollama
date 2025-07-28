@@ -62,16 +62,6 @@ spec:
           secret:
             secretName: vault-root-token
 
-      initContainers:
-        - name: load-kubectl
-          image: bitnami/kubectl:latest
-          command: ["sh", "-c"]
-          args:
-            - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
-          volumeMounts:
-            - name: kubectl-bin
-              mountPath: /kubectl-bin
-              
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
@@ -237,7 +227,6 @@ spec:
                 sleep 2
               done
 
-              kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
 
           volumeMounts:
@@ -282,6 +271,52 @@ spec:
                 sed 's/namespace: vault/namespace: ollama/' | \
                 kubectl apply -f -
               echo "✅ Secret copied successfully."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: start-database-url-rotation-job
+  namespace: ollama
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+
+      volumes:
+        - name: kubectl-bin
+          emptyDir: {}
+
+      initContainers:
+        - name: load-kubectl
+          image: bitnami/kubectl:latest
+          command: ["sh", "-c"]
+          args:
+            - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+          volumeMounts:
+            - name: kubectl-bin
+              mountPath: /kubectl-bin
+
+      containers:
+        - name: copy-secret
+          image: bitnami/kubectl:latest
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: kubectl-bin
+              mountPath: /usr/local/bin
+
+          command:
+            - /bin/sh
+            - -c
+            - |
+              kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama
 ---
 apiVersion: apps/v1
 kind: Deployment
