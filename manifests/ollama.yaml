@@ -206,7 +206,7 @@ spec:
 
               # --- Test credentials from Vault ---
               echo "🔍 Testing Vault credential issuance..."
-              for i in {1..10}; do
+              while true; do
                 if vault read yugabyte-db/creds/$VAULT_ROLE >/dev/null 2>&1; then
                   echo "✅ Vault can issue dynamic credentials for $VAULT_ROLE"
                   break
