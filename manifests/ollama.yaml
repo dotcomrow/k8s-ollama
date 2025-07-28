@@ -229,10 +229,9 @@ spec:
 
               echo "🔍 Testing Vault credential issuance and DB permissions..."
               CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$VAULT_ROLE 2>/dev/null)
-              if [ $? -ne 0 ]; then
-                echo "🔁 Retrying test credential issuance..."
-                sleep 2
-                continue
+              if [ $? -ne 0 ] || [ -z "$CREDS_JSON" ]; then
+                echo "❌ Failed to issue dynamic credentials from Vault"
+                exit 1
               fi
 
               DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
