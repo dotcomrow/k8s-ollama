@@ -54,6 +54,9 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -249,6 +252,9 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -304,6 +310,9 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
