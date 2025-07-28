@@ -158,10 +158,17 @@ spec:
 
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT ALL ON TABLES TO $OPENWEBUI_USER;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT USAGE ON SEQUENCES TO $OPENWEBUI_USER;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT EXECUTE ON FUNCTIONS TO $OPENWEBUI_USER;
               END
               \$\$;
               SQL
-              echo "✅ User $OPENWEBUI_USER setup complete"
+
+              # --- Extra grant in case migrations need to create schemas ---
+              echo "📌 Granting CREATE ON DATABASE $OPENWEBUI_DB to $OPENWEBUI_USER..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT CREATE ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;"
 
               # --- Grant vaultadmin access to schema + objects ---
               echo "🔐 Granting $VAULTADMIN_USER access to $OPENWEBUI_DB..."
