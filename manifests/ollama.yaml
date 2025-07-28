@@ -198,13 +198,14 @@ spec:
                 db_name=yugabyte \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
-                  GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO \"{{name}}\";
+                  GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
                   GRANT USAGE ON SCHEMA public TO \"{{name}}\";
+                  GRANT CREATE ON SCHEMA public TO \"{{name}}\";
                   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
                   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
-                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
+                  ALTER DEFAULT_PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
                 " \
                 default_ttl=24h \
                 max_ttl=24h
