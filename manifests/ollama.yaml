@@ -332,7 +332,7 @@ spec:
               mountPath: /kubectl-bin
 
       containers:
-        - name: copy-secret
+        - name: start-job
           image: bitnami/kubectl:latest
           resources:
             requests:
