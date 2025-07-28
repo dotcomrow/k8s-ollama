@@ -246,7 +246,7 @@ spec:
                 echo "$SQL"
                 echo "--------------------------"
 
-                PSQL_CMD="psql -h yb-tserver-service.yugabyte.svc.cluster.local -U \"$DB_USER\" -d \"$VAULT_ROLE\" -v ON_ERROR_STOP=1 -c \"$SQL\""
+                PSQL_CMD="psql -h yb-tserver-service.yugabyte.svc.cluster.local -U \"$DB_USER\" -p \"$PGPORT\" -d \"$VAULT_ROLE\" -v ON_ERROR_STOP=1 -c \"$SQL\""
                 echo "💻 Running: $PSQL_CMD"
 
                 # Run it with debug environment and output to log
