@@ -72,7 +72,8 @@ spec:
           args:
             - |
               #!/bin/bash
-              set -euo pipefail
+              set -Eeuo pipefail
+              trap 'echo "❌ Script failed at line $LINENO with exit code $?"' ERR
 
               echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
 
@@ -246,25 +247,21 @@ spec:
                 echo "$SQL"
                 echo "--------------------------"
 
-                RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
-                              -U "$DB_USER" \
-                              -d "$VAULT_ROLE" \
-                              -v ON_ERROR_STOP=1 \
-                              -c "$SQL" 2>&1)
-                STATUS=$?
+                PSQL_CMD="psql -h yb-tserver-service.yugabyte.svc.cluster.local -U \"$DB_USER\" -d \"$VAULT_ROLE\" -v ON_ERROR_STOP=1 -c \"$SQL\""
+                echo "💻 Running: $PSQL_CMD"
 
-                echo "$RESULT"
+                # Run it with debug environment and output to log
+                env PGPASSWORD="$DB_PASSWORD" bash -c "$PSQL_CMD" 2>&1 | tee /tmp/psql_output.log
+                STATUS=${PIPESTATUS[0]}
+
                 echo "🔎 Exit status: $STATUS"
                 if [ "$STATUS" -ne 0 ]; then
-                  echo "❌ ERROR running SQL:"
-                  echo "$SQL"
-                  echo "❌ PostgreSQL error output:"
-                  echo "$RESULT"
-                  exit 1
+                  echo "❌ psql failed with:"
+                  cat /tmp/psql_output.log
+                  exit $STATUS
                 else
                   echo "✅ Query ran successfully"
                 fi
-                echo
               }
 
               while true; do
