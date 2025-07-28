@@ -271,20 +271,13 @@ spec:
                 sleep 3
 
                 # Then try connecting
-                run_psql "SELECT current_user;"  # Forces actual SQL parsing
+                run_psql "SELECT current_user;"
+                run_psql "SELECT has_schema_privilege('$DB_USER', 'public', 'USAGE') AS has_usage,
+                                has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create,
+                                has_schema_privilege('$DB_USER', 'public', 'ALL') AS has_all;"
 
-                # Check schema-level privileges
-                run_psql "SELECT grantee, privilege_type FROM information_schema.role_schema_grants WHERE grantee = '$DB_USER' AND schema_name = 'public';"
-
-                # Check table-level privileges
-                run_psql "SELECT grantee, privilege_type, table_name FROM information_schema.role_table_grants WHERE grantee = '$DB_USER' AND table_schema = 'public';"
-
-                # Check sequence-level privileges
-                run_psql "SELECT grantee, privilege_type, sequence_name FROM information_schema.role_usage_grants WHERE grantee = '$DB_USER' AND object_type = 'SEQUENCE' AND object_schema = 'public';"
-
-                # Check effective privileges (if supported)
-                run_psql "SELECT has_schema_privilege('$DB_USER', 'public', 'USAGE') AS has_usage, has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create, has_schema_privilege('$DB_USER', 'public', 'ALL') AS has_all;"
-
+                run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
+                run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
                 echo "✅ Permission test succeeded."
 
                 if echo "$TEST_RESULT" | grep -qiE "error|permission denied|FATAL"; then
