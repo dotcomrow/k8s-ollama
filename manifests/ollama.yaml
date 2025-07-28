@@ -194,8 +194,8 @@ spec:
               # --- Define dynamic Vault role for openwebui ---
               echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
               vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
-              vault write yugabyte-db/roles/openwebui \
-                db_name=yugabyte \
+              vault write yugabyte-db/roles/$VAULT_ROLE \
+                db_name=$VAULT_ROLE \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
                   GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
@@ -242,15 +242,25 @@ spec:
 
               function run_psql() {
                 local SQL="$1"
-                echo "🔎 Running: $SQL"
+                echo "🔎 Running SQL:"
+                echo "$SQL"
+                echo "--------------------------"
+
                 RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
                               -U "$DB_USER" \
                               -d openwebui \
                               -tAc "$SQL" 2>&1)
                 STATUS=$?
+
+                echo "🔍 psql exit code: $STATUS"
+                echo "🔍 psql output:"
                 echo "$RESULT"
+                echo "--------------------------"
+
                 if [ "$STATUS" -ne 0 ]; then
-                  echo "❌ ERROR running: $SQL"
+                  echo "❌ ERROR executing SQL:"
+                  echo "$SQL"
+                  echo "📛 Aborting script due to SQL failure."
                   exit 1
                 fi
               }
