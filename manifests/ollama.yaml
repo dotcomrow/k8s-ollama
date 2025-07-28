@@ -72,6 +72,17 @@ spec:
 
               echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
 
+              apk add --no-cache bash curl libpq
+              # Replace with the version you're using
+              YB_VERSION=2.25.2.0
+              YB_PLATFORM=linux
+              YB_TARBALL=yugabyte-$YB_VERSION-$YB_PLATFORM.tar.gz
+
+              curl -LO https://downloads.yugabyte.com/$YB_TARBALL
+              tar -xzf $YB_TARBALL
+              mv yugabyte-$YB_VERSION /opt/yugabyte
+              export PATH=/opt/yugabyte/bin:$PATH
+
               # --- Constants ---
               export PATH=$PATH:/vault-bin
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
