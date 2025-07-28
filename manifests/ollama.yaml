@@ -202,7 +202,7 @@ spec:
                   GRANT USAGE ON SCHEMA public TO \"{{name}}\";
                   GRANT CREATE ON SCHEMA public TO \"{{name}}\";
                   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
-                  GRANT USAGE, SELECT, INSERT, UPDATE, DELETE ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
+                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
                 " \
                 default_ttl="24h" \
