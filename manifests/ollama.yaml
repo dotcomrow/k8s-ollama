@@ -74,14 +74,10 @@ spec:
 
               apk add --no-cache bash curl libpq
               # Replace with the version you're using
-              YB_VERSION=2.25.2.0
-              YB_PLATFORM=linux
-              YB_TARBALL=yugabyte-$YB_VERSION-$YB_PLATFORM.tar.gz
-
-              curl -fL -o $YB_TARBALL https://downloads.yugabyte.com/$YB_TARBALL
-              tar -xzf $YB_TARBALL
-              mv yugabyte-$YB_VERSION /opt/yugabyte
-              export PATH=/opt/yugabyte/bin:$PATH
+              YB_VER=2.25.2.0
+              curl -fL https://downloads.yugabyte.com/releases/$YB_VER/yugabyte-$YB_VER-linux.tar.gz | tar xz
+              cp yugabyte-$YB_VER/bin/ysqlsh /usr/local/bin/
+              chmod +x /usr/local/bin/ysqlsh
 
               # --- Constants ---
               export PATH=$PATH:/vault-bin
