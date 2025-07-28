@@ -267,7 +267,12 @@ spec:
 
               while true; do
                 echo "🔎 Testing DB permissions for dynamic user: $DB_USER"
-                run_psql "\\conninfo"  # <-- Force login
+                # Wait for metadata to sync
+                psql -h "$DB_HOST" -U vaultadmin -d "$VAULT_ROLE" -c "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER';" >/dev/null
+                sleep 3
+
+                # Then try connecting
+                run_psql "\\conninfo"
                 run_psql "CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL);"
                 run_psql "INSERT INTO test_perm_check DEFAULT VALUES;"
                 run_psql "SELECT * FROM test_perm_check;"
