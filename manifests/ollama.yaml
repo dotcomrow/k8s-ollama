@@ -77,7 +77,7 @@ spec:
               echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
 
               # Install PostgreSQL client tools
-              apk add --no-cache bash curl postgresql15-client
+              apk add --no-cache bash curl postgresql15-client jq
 
               # --- Constants ---
               export PATH=$PATH:/vault-bin
