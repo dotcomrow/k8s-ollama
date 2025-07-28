@@ -248,21 +248,23 @@ spec:
 
                 RESULT=$(psql -h yb-tserver-service.yugabyte.svc.cluster.local \
                               -U "$DB_USER" \
-                              -d openwebui \
-                              -tAc "$SQL" 2>&1)
+                              -d "$VAULT_ROLE" \
+                              -v ON_ERROR_STOP=1 \
+                              -c "$SQL" 2>&1)
                 STATUS=$?
 
-                echo "🔍 psql exit code: $STATUS"
-                echo "🔍 psql output:"
                 echo "$RESULT"
-                echo "--------------------------"
-
+                echo "🔎 Exit status: $STATUS"
                 if [ "$STATUS" -ne 0 ]; then
-                  echo "❌ ERROR executing SQL:"
+                  echo "❌ ERROR running SQL:"
                   echo "$SQL"
-                  echo "📛 Aborting script due to SQL failure."
+                  echo "❌ PostgreSQL error output:"
+                  echo "$RESULT"
                   exit 1
+                else
+                  echo "✅ Query ran successfully"
                 fi
+                echo
               }
 
               while true; do
