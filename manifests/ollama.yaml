@@ -202,7 +202,7 @@ spec:
                   GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO \"{{name}}\";
                   GRANT USAGE, CREATE ON SCHEMA public TO \"{{name}}\";
                   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
-                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{name}}\";
+                  GRANT ALL ON SCHEMA public TO \"{{name}}\";
                   GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
                   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
