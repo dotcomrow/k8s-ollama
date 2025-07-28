@@ -61,6 +61,17 @@ spec:
         - name: root-token
           secret:
             secretName: vault-root-token
+
+      initContainers:
+        - name: load-kubectl
+          image: bitnami/kubectl:latest
+          command: ["sh", "-c"]
+          args:
+            - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+          volumeMounts:
+            - name: kubectl-bin
+              mountPath: /kubectl-bin
+              
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
@@ -118,14 +129,24 @@ spec:
               done
 
               # --- Ensure openwebui database exists ---
-              echo "📦 Checking if $OPENWEBUI_DB exists..."
-              DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'")
-              if [[ "$DB_EXISTS" != "1" ]]; then
+              while true; do
+                echo "📦 Checking if $OPENWEBUI_DB exists..."
+                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'" 2>/dev/null || true)
+
+                if [[ "$DB_EXISTS" == "1" ]]; then
+                  echo "✅ Database $OPENWEBUI_DB already exists"
+                  break
+                fi
+
                 echo "📦 Creating database $OPENWEBUI_DB..."
-                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$OPENWEBUI_DB"
-              else
-                echo "✅ Database $OPENWEBUI_DB already exists"
-              fi
+                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$OPENWEBUI_DB" 2>/dev/null; then
+                  echo "✅ Database $OPENWEBUI_DB created successfully"
+                  break
+                else
+                  echo "🔁 Waiting for Yugabyte to accept DB operations..."
+                  sleep 3
+                fi
+              done
 
               # --- Create openwebui user and grant access ---
               echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
@@ -216,6 +237,7 @@ spec:
                 sleep 2
               done
 
+              kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
 
           volumeMounts:
@@ -611,7 +633,6 @@ spec:
                 secretName: vault-root-token
             - name: kubectl-bin
               emptyDir: {}
-
 ---
 apiVersion: apps/v1
 kind: Deployment
