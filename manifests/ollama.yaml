@@ -290,6 +290,7 @@ spec:
                 run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'INSERT,SELECT,UPDATE,DELETE') AS table_access;"
                 run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
                 echo "✅ Permission test succeeded."
+                break
               done
 
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
