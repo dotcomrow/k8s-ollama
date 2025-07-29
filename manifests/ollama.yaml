@@ -192,22 +192,15 @@ spec:
               SQL
               echo "✅ $VAULTADMIN_USER access confirmed"
 
-              # --- Define dynamic Vault role for openwebui ---
+              # --- Define dynamic Vault role for openwebui with INHERIT from openwebui ---
               echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
               vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
               vault write yugabyte-db/roles/$VAULT_ROLE \
                 db_name=yugabyte \
                 creation_statements="
-                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
-                  GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO \"{{name}}\";
-                  GRANT USAGE, CREATE ON SCHEMA public TO \"{{name}}\";
-                  GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{{name}}\";
-                  GRANT ALL ON SCHEMA public TO \"{{name}}\";
-                  GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO \"{{name}}\";
-                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{{name}}\";
-                  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"{{name}}\";
+                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $OPENWEBUI_USER VALID UNTIL '{{expiration}}';
                 " \
-                default_ttl="24h" \
+                default_ttl="1h" \
                 max_ttl="24h"
               echo "✅ Vault role '$VAULT_ROLE' created"
 
