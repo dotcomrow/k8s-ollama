@@ -278,18 +278,6 @@ spec:
                           JOIN pg_roles u ON u.oid = m.member
                           WHERE u.rolname = '$DB_USER';"
 
-                echo "🔎 Checking schema privileges for 'openwebui' role..."
-                run_psql "SELECT grantee, privilege_type, table_schema
-                          FROM information_schema.role_schema_grants
-                          WHERE grantee = 'openwebui'
-                          ORDER BY table_schema, privilege_type;"
-
-                echo "🔎 Checking schema privileges for dynamic Vault user..."
-                run_psql "SELECT grantee, privilege_type, table_schema
-                          FROM information_schema.role_schema_grants
-                          WHERE grantee = '$DB_USER'
-                          ORDER BY table_schema, privilege_type;"
-
                 echo "🔎 Testing inherited privileges with SET ROLE openwebui..."
                 run_psql "SET ROLE openwebui; SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS inherited_create;"
 
