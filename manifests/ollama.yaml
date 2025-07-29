@@ -199,7 +199,10 @@ spec:
                 db_name=yugabyte \
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT VALID UNTIL '{{expiration}}';
-                  GRANT $OPENWEBUI_USER TO \"{{name}}\";
+                      GRANT $OPENWEBUI_USER TO \"{{name}}\";
+
+                      ALTER ROLE \"{{name}}\" IN DATABASE $OPENWEBUI_USER SET ROLE $OPENWEBUI_USER;
+                      ALTER ROLE \"{{name}}\" IN DATABASE $OPENWEBUI_USER SET search_path = $OPENWEBUI_USER, public;
                 " \
                 default_ttl="1h" \
                 max_ttl="24h"
