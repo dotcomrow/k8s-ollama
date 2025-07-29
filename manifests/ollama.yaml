@@ -200,9 +200,9 @@ spec:
                 creation_statements="
                   CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT VALID UNTIL '{{expiration}}';
                   GRANT CONNECT ON DATABASE openwebui TO \"{{name}}\";
-                  GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
-                  GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
-                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
+                  # GRANT USAGE ON SCHEMA openwebui TO \"{{name}}\";
+                  # GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO \"{{name}}\";
+                  # GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO \"{{name}}\";
                 " \
                 default_ttl="1h" \
                 max_ttl="24h"
