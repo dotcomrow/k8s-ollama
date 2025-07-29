@@ -151,8 +151,9 @@ spec:
                   CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD 'changeme';
                 END IF;
 
-                -- ✅ FIX: Create schema if missing
-                EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I AUTHORIZATION %I', '$OPENWEBUI_USER', '$OPENWEBUI_USER');
+                -- ✅ FIXED: Separate schema creation and ownership transfer
+                EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', '$OPENWEBUI_USER');
+                EXECUTE format('ALTER SCHEMA %I OWNER TO %I', '$OPENWEBUI_USER', '$OPENWEBUI_USER');
 
                 -- ✅ FIX: Grant privileges on both public and openwebui schemas
                 GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;
