@@ -151,22 +151,17 @@ spec:
                   CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD 'changeme';
                 END IF;
 
-                -- ✅ FIXED: Separate schema creation and ownership transfer
-                EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', '$OPENWEBUI_USER');
-                EXECUTE format('ALTER SCHEMA %I OWNER TO %I', '$OPENWEBUI_USER', '$OPENWEBUI_USER');
-
-                -- ✅ FIX: Grant privileges on both public and openwebui schemas
                 GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;
-                GRANT USAGE ON SCHEMA public, $OPENWEBUI_USER TO $OPENWEBUI_USER;
-                GRANT CREATE ON SCHEMA public, $OPENWEBUI_USER TO $OPENWEBUI_USER;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public, $OPENWEBUI_USER TO $OPENWEBUI_USER;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, $OPENWEBUI_USER TO $OPENWEBUI_USER;
+                GRANT USAGE ON SCHEMA public TO $OPENWEBUI_USER;
+                GRANT CREATE ON SCHEMA public TO $OPENWEBUI_USER;
+                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $OPENWEBUI_USER;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $OPENWEBUI_USER;
 
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public, $OPENWEBUI_USER
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT ALL ON TABLES TO $OPENWEBUI_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public, $OPENWEBUI_USER
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT USAGE ON SEQUENCES TO $OPENWEBUI_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public, $OPENWEBUI_USER
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT EXECUTE ON FUNCTIONS TO $OPENWEBUI_USER;
               END
               \$\$;
@@ -203,12 +198,7 @@ spec:
               vault write yugabyte-db/roles/$VAULT_ROLE \
                 db_name=yugabyte \
                 creation_statements="
-                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT VALID UNTIL '{{expiration}}';
-                  GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO \"{{name}}\";
-                  GRANT USAGE ON SCHEMA public, $OPENWEBUI_USER TO \"{{name}}\";
-                  GRANT CREATE ON SCHEMA public, $OPENWEBUI_USER TO \"{{name}}\";
-                  GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public, $OPENWEBUI_USER TO \"{{name}}\";
-                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, $OPENWEBUI_USER TO \"{{name}}\";
+                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $OPENWEBUI_USER VALID UNTIL '{{expiration}}';
                 " \
                 default_ttl="1h" \
                 max_ttl="24h"
