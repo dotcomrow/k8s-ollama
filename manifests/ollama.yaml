@@ -323,7 +323,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: copy-secret
-          image: bitnami/kubectl:latest
+          image: rancher/kubectl:v1.32.7
           resources:
             requests:
               cpu: "50m"
@@ -685,7 +685,7 @@ spec:
           restartPolicy: Never
           initContainers:
             - name: load-kubectl
-              image: bitnami/kubectl:latest
+              image: rancher/kubectl:v1.32.7
               command: ["sh", "-c"]
               args:
                 - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
