@@ -275,6 +275,9 @@ spec:
                 run_psql "SELECT has_schema_privilege('$DB_USER', 'public', 'USAGE') AS has_usage,
                                 has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create;"
 
+                # Create the test table only if CREATE privilege is expected
+                run_psql "CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL PRIMARY KEY);"
+                
                 run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
                 run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
                 run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'INSERT,SELECT,UPDATE,DELETE') AS table_access;"
