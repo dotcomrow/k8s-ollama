@@ -289,16 +289,6 @@ spec:
                 run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'INSERT,SELECT,UPDATE,DELETE') AS table_access;"
                 run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
                 echo "✅ Permission test succeeded."
-
-                if echo "$TEST_RESULT" | grep -qiE "error|permission denied|FATAL"; then
-                  echo "❌ Permission test failed for $DB_USER:"
-                  echo "$TEST_RESULT"
-                  echo "🔁 Retrying test credential issuance and DB access..."
-                  sleep 2
-                else
-                  echo "✅ Permission test passed for dynamic user: $DB_USER"
-                  break
-                fi
               done
 
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
