@@ -386,17 +386,17 @@ spec:
 
       initContainers:
         - name: load-kubectl
-          image: bitnami/kubectl:latest
+          image: rancher/kubectl:v1.32.7
           command: ["sh", "-c"]
           args:
-            - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+            - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
           volumeMounts:
             - name: kubectl-bin
               mountPath: /kubectl-bin
 
       containers:
         - name: start-job
-          image: bitnami/kubectl:latest
+          image: rancher/kubectl:v1.32.7
           resources:
             requests:
               cpu: "50m"
@@ -688,7 +688,7 @@ spec:
               image: rancher/kubectl:v1.32.7
               command: ["sh", "-c"]
               args:
-                - cp /opt/bitnami/kubectl/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+                - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /kubectl-bin
