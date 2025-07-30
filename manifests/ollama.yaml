@@ -136,13 +136,6 @@ spec:
                 fi
               done
 
-              if [ "$DB_EXISTS" != "1" ]; then
-                echo "📦 Creating database $DB..."
-                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$DB"
-              else
-                echo "✅ Database $DB already exists"
-              fi
-
               # --- Ensure ROLE exists ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
