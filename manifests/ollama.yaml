@@ -117,8 +117,24 @@ spec:
               done
 
               # --- Ensure $DB database exists ---
-              echo "📦 Checking if $DB exists..."
-              DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" || true)
+              while true; do
+                echo "📦 Checking if $DB exists..."
+                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)
+
+                if [[ "$DB_EXISTS" == "1" ]]; then
+                  echo "✅ Database $DB already exists"
+                  break
+                fi
+
+                echo "📦 Creating database $DB..."
+                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
+                  echo "✅ Database $DB created successfully"
+                  break
+                else
+                  echo "🔁 Waiting for Yugabyte to accept DB operations..."
+                  sleep 3
+                fi
+              done
 
               if [ "$DB_EXISTS" != "1" ]; then
                 echo "📦 Creating database $DB..."
