@@ -145,13 +145,15 @@ spec:
               echo "🏗️ Creating schema openwebui if it doesn't exist..."
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" -c "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $OPENWEBUI_USER;"
 
+              STRONG_PWD="$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 24)"
+
               # --- Create openwebui user and grant access ---
               echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
               DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OPENWEBUI_USER') THEN
-                  CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD 'changeme';
+                  CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD '$STRONG_PWD';
                 END IF;
 
                 GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;
@@ -209,7 +211,7 @@ spec:
 
               echo "🔐 Running one-time GRANTs as openwebui..."
 
-              export PGPASSWORD="changeme"  # or use vault kv get if stored
+              export PGPASSWORD="$STRONG_PWD"  # or use vault kv get if stored
 
               psql -h "$PGHOST" -p "$PGPORT" -U "$OPENWEBUI_USER" -d "$OPENWEBUI_DB" <<SQL
               GRANT USAGE ON SCHEMA openwebui TO openwebui;
