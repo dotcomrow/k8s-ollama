@@ -202,7 +202,7 @@ spec:
               vault write yugabyte-db/roles/$VAULT_ROLE \
                 db_name=yugabyte \
                 creation_statements="
-                  CREATE ROLE "{{name}}" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $OPENWEBUI_USER VALID UNTIL '{{expiration}}';
+                  CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE openwebui VALID UNTIL '{{expiration}}';
                 " \
                 default_ttl="1h" \
                 max_ttl="24h"
