@@ -323,7 +323,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: copy-secret
-          image: rancher/kubectl:v1.32.7
+          image: alpine/k8s:1.31.4
           resources:
             requests:
               cpu: "50m"
@@ -386,7 +386,7 @@ spec:
 
       initContainers:
         - name: load-kubectl
-          image: rancher/kubectl:v1.32.7
+          image: alpine/k8s:1.31.4
           command: ["sh", "-c"]
           args:
             - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
@@ -396,7 +396,7 @@ spec:
 
       containers:
         - name: start-job
-          image: rancher/kubectl:v1.32.7
+          image: alpine/k8s:1.31.4
           resources:
             requests:
               cpu: "50m"
@@ -685,7 +685,7 @@ spec:
           restartPolicy: Never
           initContainers:
             - name: load-kubectl
-              image: rancher/kubectl:v1.32.7
+              image: alpine/k8s:1.31.4
               command: ["sh", "-c"]
               args:
                 - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
