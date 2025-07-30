@@ -142,6 +142,9 @@ spec:
                 fi
               done
 
+              echo "🏗️ Creating schema openwebui if it doesn't exist..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" -c "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $OPENWEBUI_USER;"
+
               # --- Create openwebui user and grant access ---
               echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
