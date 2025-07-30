@@ -71,26 +71,20 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              #!/bin/bash
-              set -Eeuo pipefail
-              trap 'echo "❌ Script failed at line $LINENO with exit code $?"' ERR
+              #!/bin/sh
+              set -euo pipefail
 
-              echo "🚀 Starting Vault + Yugabyte initialization for openwebui..."
+              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+              PGPORT=5433
+              DB=openwebui
+              ROLE=openwebui
+              VAULTADMIN_USER=vaultadmin
 
               # Install PostgreSQL client tools
               apk add --no-cache bash curl postgresql15-client jq
 
-              # --- Constants ---
               export PATH=$PATH:/vault-bin
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-
-              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
-              PGPORT="5433"
-              VAULTADMIN_USER="vaultadmin"
-              OPENWEBUI_USER="openwebui"
-              OPENWEBUI_DB="openwebui"
-              VAULT_ROLE="openwebui"
-              VAULT_POLICY="openwebui"
 
               # --- Wait for Vault token ---
               while [ ! -f /vault-token/VAULT_TOKEN ]; do
@@ -113,231 +107,113 @@ spec:
               # --- Fetch vaultadmin password from Vault ---
               echo "🔐 Fetching vaultadmin password from Vault..."
               while true; do
-                PGPASSWORD="$(vault kv get -field=value secret/$VAULTADMIN_USER 2>/dev/null || true)"
-                if [[ -n "$PGPASSWORD" ]]; then
-                  export PGPASSWORD
+                VAULTADMIN_PASS="$(vault kv get -field=value secret/$VAULTADMIN_USER 2>/dev/null || true)"
+                if [ -n "$VAULTADMIN_PASS" ]; then
+                  export PGPASSWORD="$VAULTADMIN_PASS"
                   break
                 fi
                 echo "🔁 Waiting for secret/$VAULTADMIN_USER to become available..."
                 sleep 3
               done
 
-              # --- Ensure openwebui database exists ---
-              while true; do
-                echo "📦 Checking if $OPENWEBUI_DB exists..."
-                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$OPENWEBUI_DB'" 2>/dev/null || true)
+              # --- Ensure $DB database exists ---
+              echo "📦 Checking if $DB exists..."
+              DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" || true)
 
-                if [[ "$DB_EXISTS" == "1" ]]; then
-                  echo "✅ Database $OPENWEBUI_DB already exists"
-                  break
-                fi
+              if [ "$DB_EXISTS" != "1" ]; then
+                echo "📦 Creating database $DB..."
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$DB"
+              else
+                echo "✅ Database $DB already exists"
+              fi
 
-                echo "📦 Creating database $OPENWEBUI_DB..."
-                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$OPENWEBUI_DB" 2>/dev/null; then
-                  echo "✅ Database $OPENWEBUI_DB created successfully"
-                  break
-                else
-                  echo "🔁 Waiting for Yugabyte to accept DB operations..."
-                  sleep 3
-                fi
-              done
-
-              echo "🏗️ Creating schema openwebui if it doesn't exist..."
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" -c "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $OPENWEBUI_USER;"
-
-              STRONG_PWD="$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 24)"
-
-              # --- Create openwebui user and grant access ---
-              echo "👤 Ensuring $OPENWEBUI_USER exists and has correct privileges..."
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
+              # --- Ensure ROLE exists ---
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OPENWEBUI_USER') THEN
-                  CREATE ROLE $OPENWEBUI_USER LOGIN PASSWORD '$STRONG_PWD';
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$ROLE') THEN
+                  CREATE ROLE $ROLE;
                 END IF;
-
-                GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;
-                GRANT USAGE ON SCHEMA public TO $OPENWEBUI_USER;
-                GRANT CREATE ON SCHEMA public TO $OPENWEBUI_USER;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $OPENWEBUI_USER;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $OPENWEBUI_USER;
-
-                -- As vaultadmin or superuser
-                GRANT USAGE ON SCHEMA openwebui TO vaultadmin;
-                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public
-                  GRANT ALL ON TABLES TO $OPENWEBUI_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public
-                  GRANT USAGE ON SEQUENCES TO $OPENWEBUI_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public
-                  GRANT EXECUTE ON FUNCTIONS TO $OPENWEBUI_USER;
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                  GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;
               END
               \$\$;
-              SQL
+              EOSQL
 
-              # --- Extra grant in case migrations need to create schemas ---
-              echo "📌 Granting CREATE ON DATABASE $OPENWEBUI_DB to $OPENWEBUI_USER..."
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT CREATE ON DATABASE $OPENWEBUI_DB TO $OPENWEBUI_USER;"
+              # --- Create schema and grant privileges ---
+              echo "📦 Creating openwebui schema owned by vaultadmin and granting access to $ROLE..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
+              CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;
 
-              # --- Grant vaultadmin access to schema + objects ---
-              echo "🔐 Granting $VAULTADMIN_USER access to $OPENWEBUI_DB..."
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$OPENWEBUI_DB" <<SQL
-              DO \$\$
-              BEGIN
-                GRANT CONNECT ON DATABASE $OPENWEBUI_DB TO $VAULTADMIN_USER;
-                GRANT $OPENWEBUI_USER TO vaultadmin;
-                GRANT USAGE ON SCHEMA public, $OPENWEBUI_USER TO $VAULTADMIN_USER;
-                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public, $OPENWEBUI_USER TO $VAULTADMIN_USER;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, $OPENWEBUI_USER TO $VAULTADMIN_USER;
-                GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public, $OPENWEBUI_USER TO $VAULTADMIN_USER;
+              GRANT USAGE ON SCHEMA openwebui TO $ROLE;
+              GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $ROLE;
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO $ROLE;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $ROLE;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;
+              EOSQL
 
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public, $OPENWEBUI_USER
-                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $VAULTADMIN_USER;
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public, $OPENWEBUI_USER
-                  GRANT USAGE ON SEQUENCES TO $VAULTADMIN_USER;
-              END
-              \$\$;
-              SQL
-              echo "✅ $VAULTADMIN_USER access confirmed"
-
-              echo "🔐 Running one-time GRANTs as openwebui..."
-
-              export PGPASSWORD="$STRONG_PWD"  # or use vault kv get if stored
-
-              psql -h "$PGHOST" -p "$PGPORT" -U "$OPENWEBUI_USER" -d "$OPENWEBUI_DB" <<SQL
-              GRANT USAGE ON SCHEMA openwebui TO openwebui;
-              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO openwebui;
-              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO openwebui;
-
-              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openwebui;
-
-              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                GRANT USAGE, SELECT ON SEQUENCES TO openwebui;
-              SQL
-
-              echo "✅ One-time GRANTs complete"
-
-              # --- Define dynamic Vault role for openwebui with INHERIT from openwebui ---
-              echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
-              vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
-              vault write yugabyte-db/roles/$VAULT_ROLE \
+              # --- Create dynamic Vault role ---
+              echo "🔐 Creating dynamic Vault role..."
+              vault write yugabyte-db/roles/$ROLE \
                 db_name=yugabyte \
-                creation_statements="
-                    CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';
-                    GRANT openwebui TO \"{{name}}\";
-                " \
+                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}';" \
                 default_ttl="1h" \
                 max_ttl="24h"
-              echo "✅ Vault role '$VAULT_ROLE' created"
+
+              echo "✅ Vault role '$ROLE' created"
 
               # --- Create Vault policy ---
-              echo "📜 Writing Vault policy '$VAULT_POLICY'..."
-              cat <<EOF | vault policy write "$VAULT_POLICY" -
-              path "yugabyte-db/creds/$VAULT_ROLE" {
+              echo "📜 Writing Vault policy '$ROLE'..."
+              vault policy write "$ROLE" - <<EOF
+              path "yugabyte-db/creds/$ROLE" {
                 capabilities = ["read"]
               }
               EOF
 
-              # --- Bind K8s service account to Vault role ---
+              # --- Bind K8s SA to Vault role ---
               echo "🔗 Binding Kubernetes SA to Vault role..."
-              vault write auth/kubernetes/role/$VAULT_ROLE \
-                bound_service_account_names="$VAULT_ROLE" \
+              vault write auth/kubernetes/role/$ROLE \
+                bound_service_account_names="$ROLE" \
                 bound_service_account_namespaces="ollama" \
-                policies="$VAULT_POLICY" \
+                policies="$ROLE" \
                 ttl=24h
 
-              echo "🔍 Testing Vault credential issuance and DB permissions..."
-              CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$VAULT_ROLE 2>/dev/null)
-              if [ $? -ne 0 ] || [ -z "$CREDS_JSON" ]; then
+              # --- Verify Vault credential issuance ---
+              echo "🔍 Testing Vault credential issuance..."
+              CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$ROLE 2>/dev/null || true)
+              if [ -z "$CREDS_JSON" ]; then
                 echo "❌ Failed to issue dynamic credentials from Vault"
                 exit 1
               fi
 
               DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
               DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
-
               export PGPASSWORD="$DB_PASS"
 
-              function run_psql() {
+              # --- Function to run and log SQL ---
+              run_psql() {
                 local SQL="$1"
                 echo "🔎 Running SQL:"
                 echo "$SQL"
                 echo "--------------------------"
-
-                PSQL_CMD="psql -h yb-tserver-service.yugabyte.svc.cluster.local -U \"$DB_USER\" -p \"$PGPORT\" -d \"$VAULT_ROLE\" -v ON_ERROR_STOP=1 -c \"$SQL\""
-                echo "💻 Running: $PSQL_CMD"
-
-                # Run it with debug environment and output to log
                 set +e
-                env PGPASSWORD="$PGPASSWORD" bash -c "$PSQL_CMD" 2>&1 | tee /tmp/psql_output.log
+                echo "$SQL" | psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -v ON_ERROR_STOP=1 2>&1 | tee /tmp/psql_output.log
                 STATUS=$?
                 set -e
-
                 echo "🔎 Exit status: $STATUS"
                 if [ "$STATUS" -ne 0 ]; then
-                  echo "❌ psql failed with:"
+                  echo "❌ psql failed:"
                   cat /tmp/psql_output.log
                   exit $STATUS
-                else
-                  echo "✅ Query ran successfully"
                 fi
               }
 
-              while true; do
-                echo "🔎 Testing DB permissions for dynamic user: $DB_USER"
-                # Wait for metadata to sync
-                psql -h "$PGHOST" -p "$PGPORT" -U vaultadmin -d "$VAULT_ROLE" -c "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER';" >/dev/null
-                sleep 3
-
-                # Then try connecting
-                run_psql "SELECT current_user;"
-                run_psql "SELECT has_schema_privilege('$DB_USER', 'public', 'USAGE') AS has_usage,
-                                has_schema_privilege('$DB_USER', 'public', 'CREATE') AS has_create;"
-
-                echo "🔎 Checking role membership and privileges..."
-                run_psql "SELECT rolname, oid FROM pg_roles WHERE rolname IN ('vaultadmin', 'openwebui');"
-
-                # Check openwebui schema privileges
-                run_psql "SELECT has_schema_privilege('$DB_USER', 'openwebui', 'USAGE') AS openwebui_usage,
-                                has_schema_privilege('$DB_USER', 'openwebui', 'CREATE') AS openwebui_create;"
-
-                # Try setting the role and performing an operation in the openwebui schema
-                run_psql "SET ROLE $OPENWEBUI_USER; CREATE TABLE IF NOT EXISTS openwebui.test_perm_check_schema (id SERIAL PRIMARY KEY);"
-
-                # Check table and sequence privileges explicitly in openwebui schema
-                run_psql "SELECT has_table_privilege('$DB_USER', 'openwebui.test_perm_check_schema', 'SELECT,INSERT,UPDATE,DELETE') AS table_access_openwebui;"
-                run_psql "SELECT has_sequence_privilege('$DB_USER', 'openwebui.test_perm_check_schema_id_seq', 'USAGE') AS sequence_usage_openwebui;"
-
-                echo "🔎 Checking role memberships for dynamic user..."
-                run_psql "SELECT r.rolname AS memberof
-                          FROM pg_roles r
-                          JOIN pg_auth_members m ON r.oid = m.roleid
-                          JOIN pg_roles u ON u.oid = m.member
-                          WHERE u.rolname = '$DB_USER';"
-
-                echo "🔎 Testing inherited privileges with SET ROLE openwebui..."
-                run_psql "SET ROLE openwebui; SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS inherited_create;"
-
-                # Create the test table only if CREATE privilege is expected
-                run_psql "CREATE TABLE IF NOT EXISTS test_perm_check (id SERIAL PRIMARY KEY);"
-
-                run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
-                run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
-                run_psql "SELECT has_table_privilege('$DB_USER', 'test_perm_check', 'INSERT,SELECT,UPDATE,DELETE') AS table_access;"
-                run_psql "SELECT has_sequence_privilege('$DB_USER', 'test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
-                echo "✅ Permission test succeeded."
-                break
-              done
+              # --- Validate permissions ---
+              echo "🔍 Validating dynamic user permissions..."
+              run_psql "SELECT current_user;"
+              run_psql "SELECT has_schema_privilege(current_user, 'openwebui', 'USAGE') AS schema_usage;"
+              run_psql "CREATE TABLE IF NOT EXISTS openwebui.test_perm_check (id SERIAL PRIMARY KEY);"
+              run_psql "SELECT has_table_privilege(current_user, 'openwebui.test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
+              run_psql "SELECT has_sequence_privilege(current_user, 'openwebui.test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
+              run_psql "SELECT r.rolname FROM pg_roles r JOIN pg_auth_members m ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = current_user;"
 
               echo "🎉 openwebui Vault + Yugabyte initialization complete!"
 
