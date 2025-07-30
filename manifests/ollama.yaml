@@ -304,59 +304,59 @@ roleRef:
   name: job-creator
   apiGroup: rbac.authorization.k8s.io
 ---
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: start-database-url-rotation-job
-  namespace: ollama
-spec:
-  backoffLimit: 1
-  template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
-    spec:
-      serviceAccountName: default
-      restartPolicy: Never
+# apiVersion: batch/v1
+# kind: Job
+# metadata:
+#   name: start-database-url-rotation-job
+#   namespace: ollama
+# spec:
+#   backoffLimit: 1
+#   template:
+#     metadata:
+#       annotations:
+#         linkerd.io/inject: disabled
+#     spec:
+#       serviceAccountName: default
+#       restartPolicy: Never
 
-      volumes:
-        - name: kubectl-bin
-          emptyDir: {}
+#       volumes:
+#         - name: kubectl-bin
+#           emptyDir: {}
 
-      initContainers:
-        - name: load-kubectl
-          image: alpine/k8s:1.31.4
-          command: ["sh", "-c"]
-          args:
-            - cp  /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
-          volumeMounts:
-            - name: kubectl-bin
-              mountPath: /kubectl-bin
+#       initContainers:
+#         - name: load-kubectl
+#           image: alpine/k8s:1.31.4
+#           command: ["sh", "-c"]
+#           args:
+#             - cp  /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+#           volumeMounts:
+#             - name: kubectl-bin
+#               mountPath: /kubectl-bin
 
-      containers:
-        - name: start-job
-          image: alpine/k8s:1.31.4
-          resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
-          volumeMounts:
-            - name: kubectl-bin
-              mountPath: /usr/local/bin
+#       containers:
+#         - name: start-job
+#           image: alpine/k8s:1.31.4
+#           resources:
+#             requests:
+#               cpu: "50m"
+#               memory: "64Mi"
+#             limits:
+#               cpu: "200m"
+#               memory: "256Mi"
+#           volumeMounts:
+#             - name: kubectl-bin
+#               mountPath: /usr/local/bin
 
-          command:
-            - /bin/sh
-            - -c
-            - |
-              echo "🔁 Triggering sync-openwebui-db-secret-now from CronJob..."
-              until kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama; do
-                echo "⏳ Waiting for CronJob to be available..."
-                sleep 3
-              done
-              echo "✅ Job successfully created"
+#           command:
+#             - /bin/sh
+#             - -c
+#             - |
+#               echo "🔁 Triggering sync-openwebui-db-secret-now from CronJob..."
+#               until kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama; do
+#                 echo "⏳ Waiting for CronJob to be available..."
+#                 sleep 3
+#               done
+#               echo "✅ Job successfully created"
 ---
 apiVersion: apps/v1
 kind: Deployment
