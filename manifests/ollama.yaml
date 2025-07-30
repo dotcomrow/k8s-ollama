@@ -159,7 +159,7 @@ spec:
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;
 
-              GRANT USAGE ON SCHEMA openwebui TO $ROLE;
+              GRANT USAGE, CREATE ON SCHEMA openwebui TO $ROLE;
               GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $ROLE;
               GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO $ROLE;
               ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $ROLE;
