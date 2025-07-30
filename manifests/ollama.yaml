@@ -674,7 +674,7 @@ spec:
                     sleep "$RETRY_INTERVAL"
                   done
 
-                  DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?currentSchema=openwebui"
+                  DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
 
                   echo "🔐 Creating/updating Kubernetes secret..."
                   cat <<EOF | kubectl apply -f - 
