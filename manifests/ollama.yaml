@@ -127,7 +127,7 @@ spec:
                 fi
 
                 echo "📦 Creating database $DB..."
-                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
+                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
                   echo "✅ Database $DB created successfully"
                   break
                 else
@@ -151,7 +151,7 @@ spec:
               echo "📦 Creating openwebui schema owned by vaultadmin and granting access to $ROLE and vaultadmin..."
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;
-
+              ALTER SCHEMA openwebui OWNER TO $VAULTADMIN_USER;
               -- Grants for app role
               GRANT USAGE, CREATE ON SCHEMA openwebui TO $ROLE;
               GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $ROLE;
