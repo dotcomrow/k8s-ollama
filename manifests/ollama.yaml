@@ -155,15 +155,23 @@ spec:
               EOSQL
 
               # --- Create schema and grant privileges ---
-              echo "📦 Creating openwebui schema owned by vaultadmin and granting access to $ROLE..."
+              echo "📦 Creating openwebui schema owned by vaultadmin and granting access to $ROLE and vaultadmin..."
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;
 
+              -- Grants for app role
               GRANT USAGE, CREATE ON SCHEMA openwebui TO $ROLE;
               GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $ROLE;
               GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO $ROLE;
               ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $ROLE;
               ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;
+
+              -- Grants for vaultadmin
+              GRANT USAGE, CREATE ON SCHEMA openwebui TO $VAULTADMIN_USER;
+              GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $VAULTADMIN_USER;
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO $VAULTADMIN_USER;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $VAULTADMIN_USER;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $VAULTADMIN_USER;
               EOSQL
 
               # --- Create dynamic Vault role ---
