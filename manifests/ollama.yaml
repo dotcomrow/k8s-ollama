@@ -275,6 +275,17 @@ spec:
                 echo "🔎 Checking role membership and privileges..."
                 run_psql "SELECT rolname, oid FROM pg_roles WHERE rolname IN ('vaultadmin', 'openwebui');"
 
+                # Check openwebui schema privileges
+                run_psql "SELECT has_schema_privilege('$DB_USER', 'openwebui', 'USAGE') AS openwebui_usage,
+                                has_schema_privilege('$DB_USER', 'openwebui', 'CREATE') AS openwebui_create;"
+
+                # Try setting the role and performing an operation in the openwebui schema
+                run_psql "SET ROLE $OPENWEBUI_USER; CREATE TABLE IF NOT EXISTS openwebui.test_perm_check_schema (id SERIAL PRIMARY KEY);"
+
+                # Check table and sequence privileges explicitly in openwebui schema
+                run_psql "SELECT has_table_privilege('$DB_USER', 'openwebui.test_perm_check_schema', 'SELECT,INSERT,UPDATE,DELETE') AS table_access_openwebui;"
+                run_psql "SELECT has_sequence_privilege('$DB_USER', 'openwebui.test_perm_check_schema_id_seq', 'USAGE') AS sequence_usage_openwebui;"
+
                 echo "🔎 Checking role memberships for dynamic user..."
                 run_psql "SELECT r.rolname AS memberof
                           FROM pg_roles r
