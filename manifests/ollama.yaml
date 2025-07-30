@@ -389,7 +389,7 @@ spec:
           image: alpine/k8s:1.31.4
           command: ["sh", "-c"]
           args:
-            - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+            - cp  /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
           volumeMounts:
             - name: kubectl-bin
               mountPath: /kubectl-bin
@@ -688,7 +688,7 @@ spec:
               image: alpine/k8s:1.31.4
               command: ["sh", "-c"]
               args:
-                - cp /bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+                - cp /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /kubectl-bin
