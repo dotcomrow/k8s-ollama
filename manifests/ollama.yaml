@@ -226,7 +226,7 @@ spec:
               echo "🔍 Validating dynamic user permissions..."
               run_psql "SELECT current_user;"
               run_psql "SELECT has_schema_privilege(current_user, 'openwebui', 'USAGE') AS schema_usage;"
-              run_psql "CREATE TABLE IF NOT EXISTS openwebui.test_perm_check (id SERIAL PRIMARY KEY);"
+              run_psql "SET ROLE $ROLE; CREATE TABLE IF NOT EXISTS openwebui.test_perm_check (id SERIAL PRIMARY KEY); RESET ROLE;"
               run_psql "SELECT has_table_privilege(current_user, 'openwebui.test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
               run_psql "SELECT has_sequence_privilege(current_user, 'openwebui.test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
               run_psql "SELECT r.rolname FROM pg_roles r JOIN pg_auth_members m ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = current_user;"
