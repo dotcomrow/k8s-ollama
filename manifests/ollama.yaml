@@ -196,6 +196,24 @@ spec:
               SQL
               echo "✅ $VAULTADMIN_USER access confirmed"
 
+              echo "🔐 Running one-time GRANTs as openwebui..."
+
+              export PGPASSWORD="changeme"  # or use vault kv get if stored
+
+              psql -h "$PGHOST" -p "$PGPORT" -U "$OPENWEBUI_USER" -d "$OPENWEBUI_DB" <<SQL
+              GRANT USAGE ON SCHEMA openwebui TO openwebui;
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO openwebui;
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO openwebui;
+
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openwebui;
+
+              ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                GRANT USAGE, SELECT ON SEQUENCES TO openwebui;
+              SQL
+
+              echo "✅ One-time GRANTs complete"
+
               # --- Define dynamic Vault role for openwebui with INHERIT from openwebui ---
               echo "⚙️ Creating dynamic Vault role for $VAULT_ROLE..."
               vault delete yugabyte-db/roles/$VAULT_ROLE >/dev/null 2>&1 || true
