@@ -172,8 +172,8 @@ spec:
               vault write yugabyte-db/roles/$ROLE \
                 db_name=yugabyte \
                 creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}';" \
-                default_ttl="1h" \
-                max_ttl="24h"
+                default_ttl="48h" \
+                max_ttl="48h"
 
               echo "✅ Vault role '$ROLE' created"
 
@@ -191,7 +191,7 @@ spec:
                 bound_service_account_names="$ROLE" \
                 bound_service_account_namespaces="ollama" \
                 policies="$ROLE" \
-                ttl=24h
+                ttl=48h
 
               # --- Verify Vault credential issuance ---
               echo "🔍 Testing Vault credential issuance..."
@@ -609,7 +609,7 @@ metadata:
   name: sync-openwebui-db-secret
   namespace: ollama
 spec:
-  schedule: "0 */6 * * *"  # Every 6 hours
+  schedule: "0 0 * * *"  # Every day
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
