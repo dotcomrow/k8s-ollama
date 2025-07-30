@@ -160,12 +160,23 @@ spec:
                 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $OPENWEBUI_USER;
                 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $OPENWEBUI_USER;
 
+                -- As vaultadmin or superuser
+                GRANT USAGE ON SCHEMA openwebui TO vaultadmin;
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;
+
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT ALL ON TABLES TO $OPENWEBUI_USER;
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT USAGE ON SEQUENCES TO $OPENWEBUI_USER;
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public
                   GRANT EXECUTE ON FUNCTIONS TO $OPENWEBUI_USER;
+
+                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;
+
+                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                  GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;
               END
               \$\$;
               SQL
