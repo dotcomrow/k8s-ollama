@@ -238,6 +238,9 @@ spec:
               echo "🔍 Validating dynamic user permissions..."
               # --- Validate permissions ---
               # --- Set default privileges from dynamic user ---
+              run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;"
+              run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;"
+
               run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;"
               run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;"
               run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;"
