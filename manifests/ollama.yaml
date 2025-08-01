@@ -697,6 +697,23 @@ spec:
                   done
 
                   DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
+                  PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+                  PGPORT=5433
+                  export PGPASSWORD="$PASSWORD"
+                  while true; do
+                    echo "📦 Attempting to grant privileges..."
+                    
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$USERNAME" -d openwebui <<EOSQL
+                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openwebui;
+                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT USAGE, SELECT ON SEQUENCES TO openwebui;
+
+                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;
+                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
+                      GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;
+                  EOSQL
 
                   echo "🔐 Creating/updating Kubernetes secret..."
                   cat <<EOF | kubectl apply -f - 
