@@ -663,7 +663,7 @@ spec:
 
                   echo "🔧 Installing tools..."
                   while true; do
-                    apt-get update && apt-get install -y curl unzip jq && break
+                    apt-get update && apt-get install -y curl postgresql15-client unzip jq && break
                     echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."
                     sleep "$RETRY_INTERVAL"
                   done
