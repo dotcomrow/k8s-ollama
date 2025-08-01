@@ -713,7 +713,16 @@ spec:
                       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;
                       ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
                       GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;
-                  EOSQL
+                    EOSQL
+
+                    if [ $? -eq 0 ]; then
+                      echo "✅ Privileges granted successfully."
+                      break
+                    else
+                      echo "⚠️ Failed to grant privileges. Retrying in ${RETRY_INTERVAL}s..."
+                      sleep "$RETRY_INTERVAL"
+                    fi
+                  done
 
                   echo "🔐 Creating/updating Kubernetes secret..."
                   cat <<EOF | kubectl apply -f - 
