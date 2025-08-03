@@ -238,14 +238,28 @@ spec:
               echo "🔍 Validating dynamic user permissions..."
               # --- Validate permissions ---
               # --- Set default privileges from dynamic user ---
-              run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;"
-              run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;"
+              while true; do
+                echo "📦 Attempting to set grants and default privileges..."
 
-              run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;"
-              run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;"
-              run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;"
-              run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;"
+                set +e  # Allow failure without exiting
+                run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;" && \
+                run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;" && \
+                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;" && \
+                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;" && \
+                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;" && \
+                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;"
+                STATUS=$?
+                set -e  # Re-enable strict mode
 
+                if [ "$STATUS" -eq 0 ]; then
+                  echo "✅ Grants and default privileges applied successfully."
+                  break
+                else
+                  echo "⚠️ Failed to apply grants. Retrying in 5 seconds..."
+                  sleep 5
+                fi
+              done
+              
               run_psql "SELECT current_user;"
               run_psql "SELECT has_schema_privilege(current_user, 'openwebui', 'USAGE') AS schema_usage;"
               run_psql "SET ROLE $ROLE; CREATE TABLE IF NOT EXISTS openwebui.test_perm_check (id SERIAL PRIMARY KEY); RESET ROLE;"
