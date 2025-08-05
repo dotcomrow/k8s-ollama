@@ -204,13 +204,38 @@ spec:
                 policies="$ROLE" \
                 ttl=48h
 
-              # --- Verify Vault credential issuance ---
-              echo "🔍 Testing Vault credential issuance..."
-              CREDS_JSON=$(vault read -format=json yugabyte-db/creds/$ROLE 2>/dev/null || true)
-              if [ -z "$CREDS_JSON" ]; then
-                echo "❌ Failed to issue dynamic credentials from Vault"
-                exit 1
-              fi
+              # --- Verify Vault credential issuance (retry until success) ---
+              echo "🔁 Verifying Vault credential issuance for role: ${ROLE:-<unset>} ..."
+              attempt=0
+              delay=2   # start with 2s, will back off up to 30s
+
+              while true; do
+                attempt=$((attempt + 1))
+
+                CREDS_JSON="$(vault read -format=json "yugabyte-db/creds/${ROLE}" 2>/dev/null || true)"
+
+                # Validate: non-empty JSON; if jq is present, also ensure username/password exist
+                if [ -n "$CREDS_JSON" ]; then
+                  if command -v jq >/dev/null 2>&1; then
+                    if jq -e '.data.username and .data.password' >/dev/null 2>&1 <<<"$CREDS_JSON"; then
+                      echo "✅ Credentials issued on attempt $attempt."
+                      break
+                    fi
+                  else
+                    echo "ℹ️ 'jq' not found; accepting non-empty JSON."
+                    echo "✅ Credentials issued on attempt $attempt."
+                    break
+                  fi
+                fi
+
+                echo "❌ Attempt $attempt: Failed to issue dynamic credentials from Vault. Retrying in ${delay}s..."
+                sleep "$delay"
+                # Exponential backoff capped at 30s
+                if [ "$delay" -lt 30 ]; then
+                  delay=$(( delay * 2 ))
+                  [ "$delay" -gt 30 ] && delay=30
+                fi
+              done
 
               DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
               DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
