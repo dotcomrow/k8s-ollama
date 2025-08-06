@@ -263,24 +263,40 @@ spec:
               echo "🔍 Validating dynamic user permissions..."
               # --- Validate permissions ---
               # --- Set default privileges from dynamic user ---
+              # Wrapper: never exits the parent shell even if run_psql calls exit or set -e is on
+              safe_run_psql() {
+                ( set +e; run_psql "$1" )
+                return $?  # propagate subshell's exit code
+              }
+
+              attempt=0
               while true; do
-                echo "📦 Attempting to set grants and default privileges..."
+                attempt=$((attempt+1))
+                echo "📦 Attempt $attempt: setting grants and default privileges..."
 
-                set +e  # Allow failure without exiting
-                run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;" && \
-                run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;" && \
-                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;" && \
-                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;" && \
-                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;" && \
-                run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;"
-                STATUS=$?
-                set -e  # Re-enable strict mode
+                ok=true
 
-                if [ "$STATUS" -eq 0 ]; then
+                # Ensure schema exists (idempotent; remove if another step is responsible)
+                safe_run_psql "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;" || ok=false
+                safe_run_psql "ALTER SCHEMA openwebui OWNER TO $VAULTADMIN_USER;" || ok=false
+
+                # Grants to vaultadmin
+                safe_run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;" || ok=false
+                safe_run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;" || ok=false
+
+                # Default privileges for $ROLE
+                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;" || ok=false
+                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;" || ok=false
+
+                # Default privileges for vaultadmin
+                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;" || ok=false
+                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;" || ok=false
+
+                if $ok; then
                   echo "✅ Grants and default privileges applied successfully."
                   break
                 else
-                  echo "⚠️ Failed to apply grants. Retrying in 5 seconds..."
+                  echo "⚠️ Failed to apply one or more statements. Retrying in 5 seconds..."
                   sleep 5
                 fi
               done
