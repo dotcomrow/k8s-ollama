@@ -277,7 +277,7 @@ spec:
                 ok=true
 
                 # Ensure schema exists (idempotent; remove if another step is responsible)
-                #safe_run_psql "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;" || ok=false
+                # safe_run_psql "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;" || ok=false
                 safe_run_psql "ALTER SCHEMA openwebui OWNER TO $VAULTADMIN_USER;" || ok=false
 
                 # Grants to vaultadmin
