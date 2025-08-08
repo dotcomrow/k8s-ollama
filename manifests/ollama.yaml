@@ -350,7 +350,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: copy-vault-root-token
+  name: copy-ollama-vault-root-token
   namespace: vault
 spec:
   backoffLimit: 1
