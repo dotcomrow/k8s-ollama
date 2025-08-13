@@ -179,14 +179,14 @@ spec:
               done
 
               # --- Ensure ROLE exists (idempotent) ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<'EOSQL'
-              DO \$\$
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
+              DO $$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'openwebui') THEN
                   CREATE ROLE openwebui NOLOGIN;
                 END IF;
               END
-              \$\$;
+              $$;
               EOSQL
 
               # --- Wait for catalog propagation ---
