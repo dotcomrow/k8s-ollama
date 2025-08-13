@@ -179,15 +179,7 @@ spec:
               done
 
               # --- Ensure ROLE exists (idempotent) ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO $$
-              BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'openwebui') THEN
-                  CREATE ROLE openwebui NOLOGIN;
-                END IF;
-              END
-              $$;
-              EOSQL
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'openwebui') THEN CREATE ROLE openwebui NOLOGIN; END IF; END \$\$;"
 
               # --- Wait for catalog propagation ---
               echo "⏳ Waiting for role 'openwebui' to be visible on all t-servers..."
