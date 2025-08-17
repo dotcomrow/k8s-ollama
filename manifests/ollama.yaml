@@ -890,25 +890,3 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
----
-# apiVersion: apisix.apache.org/v2
-# kind: ApisixRoute
-# metadata:
-#   name: open-webui-route
-#   namespace: ollama
-#   annotations:
-#     apisix.apache.org/timeout: "900"
-#     apisix.apache.org/websocket: "true"
-# spec:
-#   ingressClassName: apisix
-#   http:
-#     - name: webui
-#       websocket: true
-#       match:
-#         hosts:
-#           - ai.app.suncoast.systems
-#         paths:
-#           - /*
-#       backends:
-#         - serviceName: open-webui
-#           servicePort: 80
