@@ -578,9 +578,15 @@ spec:
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /usr/local/bin
+                - name: root-token
+                  mountPath: /vault-token
+                  readOnly: true
           volumes:
             - name: kubectl-bin
               emptyDir: {}
+            - name: root-token
+              secret:
+                secretName: vault-root-token
 ---
 apiVersion: apps/v1
 kind: Deployment
