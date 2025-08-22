@@ -130,13 +130,13 @@ spec:
               EOSQL
 
               # Ensure schema exists, reassign all objects to OWNER_LOGIN
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               -- ensure schema
               CREATE SCHEMA IF NOT EXISTS openwebui;
               ALTER SCHEMA openwebui OWNER TO openwebui_login;
 
               -- reassign all existing tables
-              DO $$
+              DO \$\$
               DECLARE r RECORD;
               BEGIN
                 FOR r IN
@@ -161,7 +161,7 @@ spec:
                 LOOP
                   EXECUTE format('ALTER VIEW %s OWNER TO openwebui_login', r.obj);
                 END LOOP;
-              END$$;
+              END\$\$;
               EOSQL
 
               echo "✅ Schema & object ownership set to $OWNER_LOGIN"
