@@ -129,6 +129,19 @@ spec:
               \$\$;
               EOSQL
 
+              # Create stable owner login if missing
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
+              DO \$\$
+              BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_LOGIN') THEN
+                  CREATE ROLE $OWNER_LOGIN LOGIN;
+                END IF;
+              END
+              \$\$;
+              -- allow vaultadmin to set OWNER to $OWNER_LOGIN
+              GRANT $OWNER_LOGIN TO $VAULTADMIN_USER;
+              EOSQL
+
               # Ensure schema exists, reassign all objects to OWNER_LOGIN
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               -- ensure schema
@@ -168,11 +181,15 @@ spec:
 
               # Create Vault static role for password rotation of fixed login
               echo "🔐 Configuring Vault static role for $OWNER_LOGIN ..."
-              vault write yugabyte-db/static-roles/openwebui-login \
-                db_name="yugabyte" \
-                username="$OWNER_LOGIN" \
-                rotation_statements="ALTER USER \\\"$OWNER_LOGIN\\\" WITH PASSWORD '{{password}}';" \
-                rotation_period="720h"
+              cat <<'JSON' | vault write yugabyte-db/static-roles/openwebui-login -
+              {
+                "db_name": "yugabyte",
+                "username": "openwebui_login",
+                "rotation_statements": "ALTER ROLE openwebui_login WITH PASSWORD '{{password}}';",
+                "rotation_period": "720h"
+              }
+              JSON
+
 
               echo "📜 Writing policy to read static creds..."
               vault policy write openwebui-login - <<EOF
@@ -189,8 +206,13 @@ spec:
                 ttl="48h"
 
               echo "🧪 Verifying static creds issuance..."
-              vault read -format=json yugabyte-db/static-creds/openwebui-login | jq -r '.data.username + ":" + .data.password' >/dev/null 2>&1 && echo "✅ Static creds OK"
-              echo "🎉 Owner + static rotation setup complete."
+              if CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log)"; then
+                echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null \
+                  && echo "✅ Static creds OK" \
+                  || { echo "❌ Missing fields"; echo "$CREDS_JSON"; exit 1; }
+              else
+                echo "❌ Failed to read static creds"; cat /tmp/vault_err.log; exit 1
+              fi
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
