@@ -16,8 +16,7 @@ metadata:
   name: ollama-models-pvc
   namespace: ollama
 spec:
-  accessModes:
-    - ReadWriteMany
+  accessModes: [ "ReadWriteMany" ]
   resources:
     requests:
       storage: 80Gi
@@ -29,8 +28,7 @@ metadata:
   name: open-webui-data
   namespace: ollama
 spec:
-  accessModes:
-    - ReadWriteMany
+  accessModes: [ "ReadWriteMany" ]
   resources:
     requests:
       storage: 20Gi
@@ -46,6 +44,7 @@ data:
     # default: deepseek-r1:14b
     deepseek-r1:14b
 ---
+# ONE-TIME DB + VAULT SETUP (owner + static role)
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -64,280 +63,141 @@ spec:
         - name: root-token
           secret:
             secretName: vault-root-token
-
       containers:
-        - name: setup-role
+        - name: setup-owner-and-static-rotation
           image: hashicorp/vault:1.15.4
           command: ["/bin/sh", "-c"]
           args:
             - |
               #!/bin/sh
-              set -euo pipefail
-
+              # No 'set -euo pipefail' per preference
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=openwebui
-              ROLE=openwebui
+              OWNER_LOGIN=openwebui_login
               VAULTADMIN_USER=vaultadmin
 
-              # Install PostgreSQL client tools
-              apk add --no-cache bash curl postgresql15-client jq
+              echo "🔧 Installing clients..."
+              apk add --no-cache bash curl postgresql15-client jq >/dev/null
 
-              export PATH=$PATH:/vault-bin
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
 
-              # --- Wait for Vault token ---
+              echo "🔑 Waiting for Vault token..."
               while [ ! -f /vault-token/VAULT_TOKEN ]; do
-                echo "🔁 Waiting for Vault token file..."
                 sleep 2
               done
-              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
-              # --- Wait for DB availability ---
-              until getent hosts "$PGHOST" >/dev/null; do
-                echo "🔄 Waiting for DNS for $PGHOST..."
-                sleep 3
-              done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do
-                echo "⏳ Waiting for DB port $PGPORT..."
-                sleep 3
-              done
-              echo "✅ YugabyteDB is reachable"
+              echo "🔎 Wait for DB endpoint..."
+              until getent hosts "$PGHOST" >/dev/null; do sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 3; done
+              echo "✅ Yugabyte reachable"
 
-              # --- Fetch vaultadmin password from Vault ---
-              echo "🔐 Fetching vaultadmin password from Vault..."
-              while true; do
+              echo "🔐 Fetching vaultadmin password..."
+              while :; do
                 VAULTADMIN_PASS="$(vault kv get -field=value secret/$VAULTADMIN_USER 2>/dev/null || true)"
-                if [ -n "$VAULTADMIN_PASS" ]; then
-                  export PGPASSWORD="$VAULTADMIN_PASS"
-                  break
-                fi
-                echo "🔁 Waiting for secret/$VAULTADMIN_USER to become available..."
+                [ -n "$VAULTADMIN_PASS" ] && break
+                echo "⏳ Waiting for secret/$VAULTADMIN_USER ..."
                 sleep 3
               done
+              export PGPASSWORD="$VAULTADMIN_PASS"
 
-              # --- Ensure $DB database exists ---
-              while true; do
-                echo "📦 Checking if $DB exists..."
+              # Ensure database exists (owned by vaultadmin for now)
+              while :; do
                 DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)
-
-                if [[ "$DB_EXISTS" == "1" ]]; then
-                  echo "✅ Database $DB already exists"
+                if [ "$DB_EXISTS" = "1" ]; then
+                  echo "✅ Database $DB exists"
                   break
                 fi
-
                 echo "📦 Creating database $DB..."
                 if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
-                  echo "✅ Database $DB created successfully"
+                  echo "✅ Created $DB"
                   break
-                else
-                  echo "🔁 Waiting for Yugabyte to accept DB operations..."
-                  sleep 3
                 fi
+                echo "⏳ Retry create DB..."
+                sleep 3
               done
 
-              # --- Ensure ROLE exists ---
+              # Create stable owner login if missing
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$ROLE') THEN
-                  CREATE ROLE $ROLE;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_LOGIN') THEN
+                  CREATE ROLE $OWNER_LOGIN LOGIN;
                 END IF;
               END
               \$\$;
               EOSQL
 
-              while true; do
-                echo "📦 Attempting to create openwebui schema and grant privileges..."
-                
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
-                CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;
-                ALTER SCHEMA openwebui OWNER TO $VAULTADMIN_USER;
-                GRANT $ROLE TO $VAULTADMIN_USER;
-                -- Grants for app role
-                GRANT USAGE, CREATE ON SCHEMA openwebui TO $ROLE;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $ROLE;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO $ROLE;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $ROLE;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;
+              # Ensure schema exists, reassign all objects to OWNER_LOGIN
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
+              -- ensure schema
+              CREATE SCHEMA IF NOT EXISTS openwebui;
+              ALTER SCHEMA openwebui OWNER TO openwebui_login;
 
-                -- Grants for vaultadmin (both existing and future)
-                GRANT USAGE, CREATE ON SCHEMA openwebui TO $VAULTADMIN_USER;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA openwebui TO $VAULTADMIN_USER;
-                GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA openwebui TO $VAULTADMIN_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON TABLES TO $VAULTADMIN_USER;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT ALL ON SEQUENCES TO $VAULTADMIN_USER;
+              -- reassign all existing tables
+              DO $$
+              DECLARE r RECORD;
+              BEGIN
+                FOR r IN
+                  SELECT format('%I.%I', schemaname, tablename) AS obj
+                  FROM pg_tables WHERE schemaname='openwebui'
+                LOOP
+                  EXECUTE format('ALTER TABLE %s OWNER TO openwebui_login', r.obj);
+                END LOOP;
+
+                -- sequences
+                FOR r IN
+                  SELECT format('%I.%I', sequence_schema, sequence_name) AS obj
+                  FROM information_schema.sequences WHERE sequence_schema='openwebui'
+                LOOP
+                  EXECUTE format('ALTER SEQUENCE %s OWNER TO openwebui_login', r.obj);
+                END LOOP;
+
+                -- views
+                FOR r IN
+                  SELECT format('%I.%I', table_schema, table_name) AS obj
+                  FROM information_schema.views WHERE table_schema='openwebui'
+                LOOP
+                  EXECUTE format('ALTER VIEW %s OWNER TO openwebui_login', r.obj);
+                END LOOP;
+              END$$;
               EOSQL
 
-                if [ $? -eq 0 ]; then
-                  echo "✅ Schema creation and grants completed successfully."
-                  break
-                else
-                  echo "⚠️ Schema creation failed. Retrying in 5 seconds..."
-                  sleep 5
-                fi
-              done
+              echo "✅ Schema & object ownership set to $OWNER_LOGIN"
 
-              # --- Ensure ROLE exists (idempotent) ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'openwebui') THEN CREATE ROLE openwebui NOLOGIN; END IF; END \$\$;"
+              # Create Vault static role for password rotation of fixed login
+              echo "🔐 Configuring Vault static role for $OWNER_LOGIN ..."
+              vault write yugabyte-db/static-roles/openwebui-login \
+                db_name="yugabyte" \
+                username="$OWNER_LOGIN" \
+                rotation_statements="ALTER USER \\\"$OWNER_LOGIN\\\" WITH PASSWORD '{{password}}';" \
+                rotation_period="720h"
 
-              # --- Wait for catalog propagation ---
-              echo "⏳ Waiting for role 'openwebui' to be visible on all t-servers..."
-              attempt=0
-              while true; do
-                attempt=$((attempt + 1))
-                if psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc \
-                    "SELECT 1 FROM pg_roles WHERE rolname = 'openwebui'" | grep -q 1; then
-                  echo "✅ Role propagated after $attempt attempt(s)"
-                  break
-                fi
-                echo "🔄 Attempt $attempt: role not yet visible; retrying in 1 s..."
-                sleep 1
-              done
-
-              # --- Create dynamic Vault role ---
-              echo "🔐 Creating dynamic Vault role..."
-              vault write yugabyte-db/roles/$ROLE \
-                db_name=yugabyte \
-                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}';" \
-                default_ttl="48h" \
-                max_ttl="48h"
-
-              echo "✅ Vault role '$ROLE' created"
-
-              # --- Create Vault policy ---
-              echo "📜 Writing Vault policy '$ROLE'..."
-              vault policy write "$ROLE" - <<EOF
-              path "yugabyte-db/creds/$ROLE" {
+              echo "📜 Writing policy to read static creds..."
+              vault policy write openwebui-login - <<EOF
+              path "yugabyte-db/static-creds/openwebui-login" {
                 capabilities = ["read"]
               }
               EOF
 
-              # --- Bind K8s SA to Vault role ---
-              echo "🔗 Binding Kubernetes SA to Vault role..."
-              vault write auth/kubernetes/role/$ROLE \
-                bound_service_account_names="$ROLE" \
+              echo "🔗 Binding K8s SA 'openwebui' in ns 'ollama' ..."
+              vault write auth/kubernetes/role/openwebui-login \
+                bound_service_account_names="openwebui" \
                 bound_service_account_namespaces="ollama" \
-                policies="$ROLE" \
-                ttl=48h
+                policies="openwebui-login" \
+                ttl="48h"
 
-              echo "🔁 Verifying Vault credential issuance for role: ${ROLE:-<unset>} ..."
-              attempt=0
-              delay=2   # start with 2s, will back off up to 30s
-
-              while true; do
-                attempt=$((attempt + 1))
-
-                CREDS_JSON="$(vault read -format=json "yugabyte-db/creds/${ROLE}" 2>/dev/null || true)"
-
-                # Validate: non-empty JSON; if jq is present, also ensure username/password exist
-                if [ -n "$CREDS_JSON" ]; then
-                  if command -v jq >/dev/null 2>&1; then
-                    if printf '%s' "$CREDS_JSON" \
-                      | jq -e '.data.username and .data.password' >/dev/null 2>&1; then
-                      echo "✅ Credentials issued on attempt $attempt."
-                      break
-                    fi
-                  else
-                    echo "ℹ️ 'jq' not found; accepting non-empty JSON."
-                    echo "✅ Credentials issued on attempt $attempt."
-                    break
-                  fi
-                fi
-
-                echo "❌ Attempt $attempt: Failed to issue dynamic credentials from Vault. Retrying in ${delay}s..."
-                sleep "$delay"
-                # Exponential backoff capped at 30s
-                if [ "$delay" -lt 30 ]; then
-                  delay=$(( delay * 2 ))
-                  [ "$delay" -gt 30 ] && delay=30
-                fi
-              done
-
-              DB_USER=$(echo "$CREDS_JSON" | jq -r .data.username)
-              DB_PASS=$(echo "$CREDS_JSON" | jq -r .data.password)
-              export PGPASSWORD="$DB_PASS"
-
-              # --- Function to run and log SQL ---
-              run_psql() {
-                local SQL="$1"
-                echo "🔎 Running SQL:"
-                echo "$SQL"
-                echo "--------------------------"
-                set +e
-                echo "$SQL" | psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -v ON_ERROR_STOP=1 2>&1 | tee /tmp/psql_output.log
-                STATUS=$?
-                set -e
-                echo "🔎 Exit status: $STATUS"
-                if [ "$STATUS" -ne 0 ]; then
-                  echo "❌ psql failed:"
-                  cat /tmp/psql_output.log
-                  exit $STATUS
-                fi
-              }
-
-              # --- Validate permissions ---
-              echo "🔍 Validating dynamic user permissions..."
-              # --- Validate permissions ---
-              # --- Set default privileges from dynamic user ---
-              # Wrapper: never exits the parent shell even if run_psql calls exit or set -e is on
-              safe_run_psql() {
-                ( set +e; run_psql "$1" )
-                return $?  # propagate subshell's exit code
-              }
-
-              attempt=0
-              while true; do
-                attempt=$((attempt+1))
-                echo "📦 Attempt $attempt: setting grants and default privileges..."
-
-                ok=true
-
-                # Ensure schema exists (idempotent; remove if another step is responsible)
-                # safe_run_psql "CREATE SCHEMA IF NOT EXISTS openwebui AUTHORIZATION $VAULTADMIN_USER;" || ok=false
-                safe_run_psql "ALTER SCHEMA openwebui OWNER TO $VAULTADMIN_USER;" || ok=false
-
-                # Grants to vaultadmin
-                safe_run_psql "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA openwebui TO vaultadmin;" || ok=false
-                safe_run_psql "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA openwebui TO vaultadmin;" || ok=false
-
-                # Default privileges for $ROLE
-                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ROLE;" || ok=false
-                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO $ROLE;" || ok=false
-
-                # Default privileges for vaultadmin
-                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;" || ok=false
-                safe_run_psql "ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;" || ok=false
-
-                if $ok; then
-                  echo "✅ Grants and default privileges applied successfully."
-                  break
-                else
-                  echo "⚠️ Failed to apply one or more statements. Retrying in 5 seconds..."
-                  sleep 5
-                fi
-              done
-              
-              run_psql "SELECT current_user;"
-              run_psql "SELECT has_schema_privilege(current_user, 'openwebui', 'USAGE') AS schema_usage;"
-              run_psql "SET ROLE $ROLE; CREATE TABLE IF NOT EXISTS openwebui.test_perm_check (id SERIAL PRIMARY KEY); RESET ROLE;"
-              run_psql "SELECT has_table_privilege(current_user, 'openwebui.test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
-              run_psql "SELECT has_sequence_privilege(current_user, 'openwebui.test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
-              run_psql "SELECT r.rolname FROM pg_roles r JOIN pg_auth_members m ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = current_user;"
-
-              echo "🎉 openwebui Vault + Yugabyte initialization complete!"
-
+              echo "🧪 Verifying static creds issuance..."
+              vault read -format=json yugabyte-db/static-creds/openwebui-login | jq -r '.data.username + ":" + .data.password' >/dev/null 2>&1 && echo "✅ Static creds OK"
+              echo "🎉 Owner + static rotation setup complete."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
 ---
 apiVersion: batch/v1
 kind: Job
@@ -357,21 +217,16 @@ spec:
         - name: copy-secret
           image: alpine/k8s:1.31.4
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
-          command:
-            - /bin/sh
-            - -c
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+          command: ["/bin/sh","-c"]
+          args:
             - |
               echo "🔁 Copying 'vault-root-token' from vault → ollama..."
               kubectl get secret vault-root-token -n vault -o yaml | \
                 sed 's/namespace: vault/namespace: ollama/' | \
                 kubectl apply -f -
-              echo "✅ Secret copied successfully."
+              echo "✅ Secret copied."
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -411,46 +266,37 @@ spec:
     spec:
       serviceAccountName: default
       restartPolicy: Never
-
       volumes:
         - name: kubectl-bin
           emptyDir: {}
-
       initContainers:
         - name: load-kubectl
           image: alpine/k8s:1.31.4
-          command: ["sh", "-c"]
-          args:
-            - cp  /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+          command: ["sh","-c"]
+          args: ["cp /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl"]
           volumeMounts:
             - name: kubectl-bin
               mountPath: /kubectl-bin
-
       containers:
         - name: start-job
           image: alpine/k8s:1.31.4
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
           volumeMounts:
             - name: kubectl-bin
               mountPath: /usr/local/bin
-
-          command:
-            - /bin/sh
-            - -c
+          command: ["/bin/sh","-c"]
+          args:
             - |
               echo "🔁 Triggering sync-openwebui-db-secret-now from CronJob..."
               until kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama; do
-                echo "⏳ Waiting for CronJob to be available..."
+                echo "⏳ Waiting for CronJob..."
                 sleep 3
               done
-              echo "✅ Job successfully created"
+              echo "✅ Job created"
 ---
+# OLLAMA (unchanged functionally)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -469,98 +315,53 @@ spec:
         app: ollama
     spec:
       runtimeClassName: nvidia
-
+      # removed wait-for Vault dynamic role (not needed)
       initContainers:
-        - name: wait-for-vault-role
-          image: hashicorp/vault:1.15.4
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              echo "🔄 Waiting for Vault role 'openwebui' to exist..."
-              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-              export VAULT_TOKEN=$(cat /vault-token/VAULT_TOKEN)
-
-              while true; do
-                if vault read auth/kubernetes/role/openwebui > /dev/null 2>&1; then
-                  echo "✅ Vault role is ready."
-                  exit 0
-                fi
-                echo "⏳ Still waiting..."
-                sleep 60
-              done
-          volumeMounts:
-            - name: vault-token
-              mountPath: /vault-token
-              readOnly: true
-
         - name: download-models
           image: ollama/ollama:latest
-          command: ["/bin/sh", "-c"]
+          command: ["/bin/sh","-c"]
           args:
             - |
               echo "🚀 Starting Ollama server..."
               ollama serve > /tmp/ollama.log 2>&1 &
               SERVER_PID=$!
               apt update && apt install wget -y
-              # Wait for the server to start responding
-              echo "⏳ Waiting for Ollama server to be ready..."
-              i=1
-              while true; do
+              echo "⏳ Waiting for Ollama server..."
+              i=1; while true; do
                 if wget --spider -q http://localhost:11434/api/tags; then
-                  echo "✅ Ollama server is ready!"
-                  break
-                fi
-                echo "⏳ Still waiting... ($i)"
-                i=$((i + 1))
-                sleep 1
+                  echo "✅ Ready"; break; fi
+                echo "⏳ Still waiting... ($i)"; i=$((i+1)); sleep 1
               done
-
               MODEL_FILE="/opt/ollama-models/models.txt"
               echo "📄 Downloading models listed in $MODEL_FILE..."
-
               while IFS= read -r model; do
-                if [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ]; then
-                  echo "📦 Pulling model: $model"
-                  ollama pull "$model"
-                fi
+                [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ] && \
+                  echo "📦 Pulling model: $model" && ollama pull "$model"
               done < "$MODEL_FILE"
-
               echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
-              kill $SERVER_PID
-              wait $SERVER_PID
+              kill $SERVER_PID; wait $SERVER_PID
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama/models
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
-
       containers:
         - name: ollama
           image: ollama/ollama:latest
           securityContext:
-            capabilities:
-              add: ["SYS_ADMIN"]
+            capabilities: { add: ["SYS_ADMIN"] }
           env:
-            - name: OLLAMA_MAX_LOADED_MODELS
-              value: "1"
-            - name: OLLAMA_NUM_PARALLEL
-              value: "2"
-            - name: OLLAMA_THREADS
-              value: "12"
-            - name: OLLAMA_TIMEOUT
-              value: "1200"
-            - name: OLLAMA_GPU_MEMORY
-              value: "15500"
-            - name: OLLAMA_FLASH_ATTENTION
-              value: "true"
-            - name: OLLAMA_CONTEXT_LENGTH
-              value: "8192"
-            - name: OLLAMA_BATCH_SIZE
-              value: "512"
-          command: ["/bin/sh"]
+            - { name: OLLAMA_MAX_LOADED_MODELS, value: "1" }
+            - { name: OLLAMA_NUM_PARALLEL,    value: "2" }
+            - { name: OLLAMA_THREADS,         value: "12" }
+            - { name: OLLAMA_TIMEOUT,         value: "1200" }
+            - { name: OLLAMA_GPU_MEMORY,      value: "15500" }
+            - { name: OLLAMA_FLASH_ATTENTION, value: "true" }
+            - { name: OLLAMA_CONTEXT_LENGTH,  value: "8192" }
+            - { name: OLLAMA_BATCH_SIZE,      value: "512" }
+          command: ["/bin/sh","-c"]
           args:
-            - -c
             - |
               echo "Resetting GPU..."
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
@@ -569,35 +370,26 @@ spec:
               DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}' | xargs)
               echo "Default model: $DEFAULT_MODEL"
               export OLLAMA_NO_CPU_OFFLOAD=1
-
               (
                 echo "⏳ Waiting for Ollama to be ready..."
-                until wget --spider -q http://localhost:11434/api/tags; do
-                  echo "Waiting..."
-                  sleep 1
-                done
-
+                until wget --spider -q http://localhost:11434/api/tags; do echo "Waiting..."; sleep 1; done
                 echo "🔥 Warming up default model: $DEFAULT_MODEL"
-                # Trigger loading of default model into memory
                 curl -s -X POST http://localhost:11434/api/generate \
                   -H "Content-Type: application/json" \
                   -d "{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" >/dev/null
-
-                echo "✅ Default model warmed and ready."
+                echo "✅ Default model warmed."
               ) &
-
-              # Start Ollama server in foreground
               exec ollama serve
           ports:
             - containerPort: 11434
           resources:
             requests:
-              cpu: "6000m"        # Idle baseline - allows the pod to run with minimal footprint
-              memory: "8Gi"      # Enough for Ollama to start but not excessive
+              cpu: "6000m"
+              memory: "8Gi"
               nvidia.com/gpu: 1
             limits:
-              cpu: "12000m"      # Full access to 8 cores when needed
-              memory: "12Gi"     # Same as before - memory usage often spikes for LLM inference
+              cpu: "12000m"
+              memory: "12Gi"
               nvidia.com/gpu: 1
           volumeMounts:
             - name: ollama-data
@@ -605,17 +397,14 @@ spec:
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
-
         - name: keep-warm
           image: alpine:latest
-          command: ["/bin/sh", "-c"]
+          command: ["/bin/sh","-c"]
           args:
             - |
               apk add --no-cache wget jq >/dev/null 2>&1
-
               while true; do
                 ACTIVE_MODEL=$(wget -qO- http://localhost:11434/api/tags | jq -r '.models[0].name')
-                
                 if [ -n "$ACTIVE_MODEL" ] && [ "$ACTIVE_MODEL" != "null" ]; then
                   echo "🔄 Keeping model $ACTIVE_MODEL warm..."
                   wget -qO- --header="Content-Type: application/json" \
@@ -624,32 +413,21 @@ spec:
                 else
                   echo "⚠️ No active model loaded."
                 fi
-
                 sleep 120
               done
           resources:
-            requests:
-              cpu: "25m"
-              memory: "32Mi"
-            limits:
-              cpu: "100m"
-              memory: "64Mi"
+            requests: { cpu: "25m", memory: "32Mi" }
+            limits:   { cpu: "100m", memory: "64Mi" }
           volumeMounts:
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
       restartPolicy: Always
-
       volumes:
         - name: ollama-data
-          persistentVolumeClaim:
-            claimName: ollama-models-pvc
+          persistentVolumeClaim: { claimName: ollama-models-pvc }
         - name: model-list
-          configMap:
-            name: ollama-models
-        - name: vault-token
-          secret:
-            secretName: vault-root-token
+          configMap: { name: ollama-models }
 ---
 apiVersion: v1
 kind: Service
@@ -666,6 +444,7 @@ spec:
       targetPort: 11434
   clusterIP: None
 ---
+# OpenWebUI RBAC for pulling static creds into a K8s Secret
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -689,20 +468,21 @@ metadata:
   namespace: ollama
 subjects:
   - kind: ServiceAccount
-    name: default
+    name: openwebui
     namespace: ollama
 roleRef:
   kind: Role
   name: secret-writer
   apiGroup: rbac.authorization.k8s.io
 ---
+# PASSWORD ROTATION CRONJOB (reads Vault static-creds, writes DATABASE_URL secret)
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: sync-openwebui-db-secret
   namespace: ollama
 spec:
-  schedule: "0 0 * * *"  # Every day
+  schedule: "0 0 * * *"  # rotate daily (Vault will rotate per rotation_period; this just refreshes secret)
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -713,91 +493,74 @@ spec:
           annotations:
             linkerd.io/inject: disabled
         spec:
-          serviceAccountName: default
+          serviceAccountName: openwebui
           restartPolicy: Never
           initContainers:
             - name: load-kubectl
               image: alpine/k8s:1.31.4
-              command: ["sh", "-c"]
-              args:
-                - cp /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl
+              command: ["sh","-c"]
+              args: ["cp /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl"]
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /kubectl-bin
           containers:
             - name: vault-sync
               image: ubuntu:22.04
-              command: ["/bin/bash", "-c"]
+              command: ["/bin/bash","-c"]
               args:
                 - |
-                  set -euo pipefail
+                  # No 'set -euo pipefail'
                   RETRY_INTERVAL=5
-
                   echo "🔧 Installing tools..."
                   while true; do
-                    apt-get update && apt-get install -y curl postgresql-client unzip jq && break
-                    echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."
-                    sleep "$RETRY_INTERVAL"
+                    apt-get update && apt-get install -y curl unzip jq postgresql-client && break
+                    echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."; sleep "$RETRY_INTERVAL"
                   done
-
                   echo "📌 Installing Vault CLI..."
                   while true; do
                     curl -fsSL -o vault.zip https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip && break
-                    echo "⚠️ Failed to download Vault CLI. Retrying in ${RETRY_INTERVAL}s..."
-                    sleep "$RETRY_INTERVAL"
+                    echo "⚠️ Vault download failed. Retrying..."; sleep "$RETRY_INTERVAL"
                   done
+                  unzip -o vault.zip >/dev/null && mv vault /usr/local/bin/ && chmod +x /usr/local/bin/vault
 
-                  unzip -o vault.zip >/dev/null
-                  mv vault /usr/local/bin/
-                  chmod +x /usr/local/bin/vault
-
-                  echo "📌 Fetching dynamic Vault credentials for openwebui..."
                   export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-                  export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+                  # Use K8s auth with SA token (recommended) OR root token if you prefer; here we use SA token:
+                  if [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+                    SA_JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                    KUBE_HOST=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace >/dev/null 2>&1; echo "")
+                    # assumes auth/kubernetes is configured; role is 'openwebui-login'
+                    while true; do
+                      VAULT_TOKEN=$(curl -s --request POST \
+                        --data "{\"jwt\":\"$SA_JWT\",\"role\":\"openwebui-login\"}" \
+                        $VAULT_ADDR/v1/auth/kubernetes/login | jq -r .auth.client_token)
+                      [ "$VAULT_TOKEN" != "null" ] && [ -n "$VAULT_TOKEN" ] && break
+                      echo "⏳ Waiting for Vault K8s login..."; sleep "$RETRY_INTERVAL"
+                    done
+                  else
+                    # fallback to shared token (not recommended); uncomment if necessary:
+                    # VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+                    echo "❗ No SA token found for Vault login"; exit 1
+                  fi
+                  export VAULT_TOKEN
 
+                  # Get static creds (username is constant: openwebui_login)
                   while true; do
-                    CREDS_JSON=$(vault read -format=json yugabyte-db/creds/openwebui 2>/tmp/vault_err.log || true)
+                    CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
                     if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
                       USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
                       PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
-                      echo "✅ Got credentials for user: $USERNAME"
+                      echo "✅ Got static creds for user: $USERNAME"
                       break
                     fi
-                    echo "⚠️ Vault credential fetch failed. Retrying in ${RETRY_INTERVAL}s..."
+                    echo "⚠️ Static creds not available yet. Retrying..."
                     cat /tmp/vault_err.log
                     sleep "$RETRY_INTERVAL"
                   done
 
                   DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
-                  PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
-                  PGPORT=5433
-                  export PGPASSWORD="$PASSWORD"
-                  while true; do
-                    echo "📦 Attempting to grant privileges..."
-                    
-                    psql -h "$PGHOST" -p "$PGPORT" -U "$USERNAME" -d openwebui <<EOSQL
-                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openwebui;
-                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT USAGE, SELECT ON SEQUENCES TO openwebui;
-
-                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO vaultadmin;
-                      ALTER DEFAULT PRIVILEGES IN SCHEMA openwebui
-                      GRANT USAGE, SELECT ON SEQUENCES TO vaultadmin;
-                  EOSQL
-
-                    if [ $? -eq 0 ]; then
-                      echo "✅ Privileges granted successfully."
-                      break
-                    else
-                      echo "⚠️ Failed to grant privileges. Retrying in ${RETRY_INTERVAL}s..."
-                      sleep "$RETRY_INTERVAL"
-                    fi
-                  done
 
                   echo "🔐 Creating/updating Kubernetes secret..."
-                  cat <<EOF | kubectl apply -f - 
+                  cat <<EOF | kubectl apply -f -
                   apiVersion: v1
                   kind: Secret
                   metadata:
@@ -808,23 +571,14 @@ spec:
                     DATABASE_URL: ${DB_URL}
                   EOF
 
+                  echo "✅ DATABASE_URL updated."
               resources:
-                requests:
-                  cpu: "50m"
-                  memory: "64Mi"
-                limits:
-                  cpu: "200m"
-                  memory: "256Mi"
+                requests: { cpu: "50m", memory: "64Mi" }
+                limits:   { cpu: "200m", memory: "256Mi" }
               volumeMounts:
-                - name: vault-token
-                  mountPath: /vault-token
-                  readOnly: true
                 - name: kubectl-bin
                   mountPath: /usr/local/bin
           volumes:
-            - name: vault-token
-              secret:
-                secretName: vault-root-token
             - name: kubectl-bin
               emptyDir: {}
 ---
@@ -863,16 +617,11 @@ spec:
             - secretRef:
                 name: openwebui-db-url
           resources:
-            requests:
-              cpu: "500m"
-              memory: "512Mi"
-            limits:
-              cpu: "2000m"
-              memory: "3Gi"
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits:   { cpu: "2000m", memory: "3Gi" }
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
-
       volumes:
         - name: webui-data
           persistentVolumeClaim:
