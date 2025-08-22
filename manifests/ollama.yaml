@@ -525,22 +525,22 @@ spec:
 
                   export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
                   # Use K8s auth with SA token (recommended) OR root token if you prefer; here we use SA token:
-                  if [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
-                    SA_JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                    KUBE_HOST=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace >/dev/null 2>&1; echo "")
-                    # assumes auth/kubernetes is configured; role is 'openwebui-login'
-                    while true; do
-                      VAULT_TOKEN=$(curl -s --request POST \
-                        --data "{\"jwt\":\"$SA_JWT\",\"role\":\"openwebui-login\"}" \
-                        $VAULT_ADDR/v1/auth/kubernetes/login | jq -r .auth.client_token)
-                      [ "$VAULT_TOKEN" != "null" ] && [ -n "$VAULT_TOKEN" ] && break
-                      echo "⏳ Waiting for Vault K8s login..."; sleep "$RETRY_INTERVAL"
-                    done
-                  else
+                  # if [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+                  #   SA_JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  #   KUBE_HOST=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace >/dev/null 2>&1; echo "")
+                  #   # assumes auth/kubernetes is configured; role is 'openwebui-login'
+                  #   while true; do
+                  #     VAULT_TOKEN=$(curl -s --request POST \
+                  #       --data "{\"jwt\":\"$SA_JWT\",\"role\":\"openwebui-login\"}" \
+                  #       $VAULT_ADDR/v1/auth/kubernetes/login | jq -r .auth.client_token)
+                  #     [ "$VAULT_TOKEN" != "null" ] && [ -n "$VAULT_TOKEN" ] && break
+                  #     echo "⏳ Waiting for Vault K8s login..."; sleep "$RETRY_INTERVAL"
+                  #   done
+                  # else
                     # fallback to shared token (not recommended); uncomment if necessary:
-                    # VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-                    echo "❗ No SA token found for Vault login"; exit 1
-                  fi
+                    VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+                    # echo "❗ No SA token found for Vault login"; exit 1
+                  # fi
                   export VAULT_TOKEN
 
                   # Get static creds (username is constant: openwebui_login)
