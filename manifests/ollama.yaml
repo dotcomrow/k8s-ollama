@@ -181,11 +181,13 @@ spec:
 
               # Create Vault static role for password rotation of fixed login
               echo "🔐 Configuring Vault static role for $OWNER_LOGIN ..."
-              cat <<'JSON' | vault write yugabyte-db/static-roles/openwebui-login -
+              cat <<'JSON' | vault write yugabyte-db/static-roles/openwebui-login - 
               {
                 "db_name": "yugabyte",
                 "username": "openwebui_login",
-                "rotation_statements": "ALTER ROLE openwebui_login WITH PASSWORD '{{password}}';",
+                "rotation_statements": [
+                  "ALTER ROLE \"{{username}}\" WITH PASSWORD '{{password}}'"
+                ],
                 "rotation_period": "720h"
               }
               JSON
