@@ -388,6 +388,7 @@ spec:
           args:
             - |
               echo "Resetting GPU..."
+              apt install wget -y
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
               apt update && apt install wget curl -y
               MODEL_FILE="/opt/ollama-models/models.txt"
