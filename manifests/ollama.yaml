@@ -612,6 +612,8 @@ spec:
     metadata:
       labels:
         app: open-webui
+      annotations:
+        config.linkerd.io/opaque-ports: "443"
     spec:
       serviceAccountName: openwebui
       containers:
@@ -629,6 +631,8 @@ spec:
               value: "true"
             - name: MCP_CLIENT_ENABLED
               value: "true"
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "0"    
           envFrom:
             - secretRef:
                 name: openwebui-db-url
