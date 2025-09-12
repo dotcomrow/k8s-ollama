@@ -613,7 +613,7 @@ spec:
       labels:
         app: open-webui
       annotations:
-        config.linkerd.io/opaque-ports: "443"
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: openwebui
       containers:
