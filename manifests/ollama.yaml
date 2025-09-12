@@ -192,7 +192,6 @@ spec:
               }
               JSON
 
-
               echo "📜 Writing policy to read static creds..."
               vault policy write openwebui-login - <<EOF
               path "yugabyte-db/static-creds/openwebui-login" {
@@ -339,7 +338,6 @@ spec:
         app: ollama
     spec:
       runtimeClassName: nvidia
-      # removed wait-for Vault dynamic role (not needed)
       initContainers:
         - name: download-models
           image: ollama/ollama:latest
@@ -507,7 +505,7 @@ metadata:
   name: sync-openwebui-db-secret
   namespace: ollama
 spec:
-  schedule: "0 0 * * *"  # rotate daily (Vault will rotate per rotation_period; this just refreshes secret)
+  schedule: "0 0 * * *"
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -534,7 +532,6 @@ spec:
               command: ["/bin/bash","-c"]
               args:
                 - |
-                  # No 'set -euo pipefail'
                   RETRY_INTERVAL=5
                   echo "🔧 Installing tools..."
                   while true; do
@@ -549,26 +546,9 @@ spec:
                   unzip -o vault.zip >/dev/null && mv vault /usr/local/bin/ && chmod +x /usr/local/bin/vault
 
                   export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-                  # Use K8s auth with SA token (recommended) OR root token if you prefer; here we use SA token:
-                  # if [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
-                  #   SA_JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                  #   KUBE_HOST=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace >/dev/null 2>&1; echo "")
-                  #   # assumes auth/kubernetes is configured; role is 'openwebui-login'
-                  #   while true; do
-                  #     VAULT_TOKEN=$(curl -s --request POST \
-                  #       --data "{\"jwt\":\"$SA_JWT\",\"role\":\"openwebui-login\"}" \
-                  #       $VAULT_ADDR/v1/auth/kubernetes/login | jq -r .auth.client_token)
-                  #     [ "$VAULT_TOKEN" != "null" ] && [ -n "$VAULT_TOKEN" ] && break
-                  #     echo "⏳ Waiting for Vault K8s login..."; sleep "$RETRY_INTERVAL"
-                  #   done
-                  # else
-                    # fallback to shared token (not recommended); uncomment if necessary:
-                    VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-                    # echo "❗ No SA token found for Vault login"; exit 1
-                  # fi
+                  VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
                   export VAULT_TOKEN
 
-                  # Get static creds (username is constant: openwebui_login)
                   while true; do
                     CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
                     if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
@@ -636,7 +616,7 @@ spec:
       serviceAccountName: openwebui
       containers:
         - name: open-webui
-          image: ghcr.io/open-webui/open-webui:latest
+          image: ghcr.io/open-webui/open-webui:main
           ports:
             - containerPort: 8080
           env:
@@ -644,6 +624,11 @@ spec:
               value: "http://ollama.ollama.svc.cluster.local:11434"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
+            # Enable the MCP client UI in recent builds
+            - name: ENABLE_MCP_CLIENT
+              value: "true"
+            - name: MCP_CLIENT_ENABLED
+              value: "true"
           envFrom:
             - secretRef:
                 name: openwebui-db-url
