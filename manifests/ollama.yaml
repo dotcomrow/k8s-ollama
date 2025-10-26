@@ -651,7 +651,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: open-webui
-  namespace: open-webui
+  namespace: ollama
   annotations:
     teleport.dev/name: "open-webui"
     teleport.dev/protocol: "http"
