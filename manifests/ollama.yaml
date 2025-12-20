@@ -336,6 +336,11 @@ spec:
     metadata:
       labels:
         app: ollama
+      annotations:
+        config.linkerd.io/proxy-cpu-request: "1"
+        config.linkerd.io/proxy-cpu-limit: "1"
+        config.linkerd.io/proxy-memory-request: "128Mi"
+        config.linkerd.io/proxy-memory-limit: "128Mi"
     spec:
       runtimeClassName: nvidia
       initContainers:
@@ -362,6 +367,13 @@ spec:
               done < "$MODEL_FILE"
               echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
               kill $SERVER_PID; wait $SERVER_PID
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "1"
+              memory: "4Gi"
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama/models
@@ -376,7 +388,7 @@ spec:
           env:
             - { name: OLLAMA_MAX_LOADED_MODELS, value: "1" }
             - { name: OLLAMA_NUM_PARALLEL,    value: "2" }
-            - { name: OLLAMA_THREADS,         value: "12" }
+            - { name: OLLAMA_THREADS,         value: "8" }
             - { name: OLLAMA_TIMEOUT,         value: "1200" }
             - { name: OLLAMA_GPU_MEMORY,      value: "15500" }
             - { name: OLLAMA_FLASH_ATTENTION, value: "true" }
@@ -407,11 +419,11 @@ spec:
             - containerPort: 11434
           resources:
             requests:
-              cpu: "6000m"
-              memory: "8Gi"
+              cpu: "8"
+              memory: "12Gi"
               nvidia.com/gpu: 1
             limits:
-              cpu: "12000m"
+              cpu: "8"
               memory: "12Gi"
               nvidia.com/gpu: 1
           volumeMounts:
@@ -439,8 +451,8 @@ spec:
                 sleep 120
               done
           resources:
-            requests: { cpu: "200m", memory: "32Mi" }
-            limits:   { cpu: "1000m", memory: "64Mi" }
+            requests: { cpu: "1", memory: "64Mi" }
+            limits:   { cpu: "1", memory: "64Mi" }
           volumeMounts:
             - name: model-list
               mountPath: /opt/ollama-models
