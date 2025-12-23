@@ -343,7 +343,6 @@ spec:
         config.linkerd.io/proxy-memory-limit: "128Mi"
     spec:
       runtimeClassName: nvidia
-      schedulerName: topology-aware-scheduler
       initContainers:
         - name: download-models
           image: ollama/ollama:latest
