@@ -678,7 +678,7 @@ spec:
             - containerPort: 8080
           env:
             - name: OLLAMA_BASE_URL
-              value: "http://ollama.ollama.svc.cluster.local:11434"
+              value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
             # Enable the MCP client UI in recent builds
