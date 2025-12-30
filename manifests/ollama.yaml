@@ -218,9 +218,6 @@ spec:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
 ---
 apiVersion: batch/v1
 kind: Job
@@ -239,9 +236,6 @@ spec:
       containers:
         - name: copy-secret
           image: alpine/k8s:1.31.4
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
           command: ["/bin/sh","-c"]
           args:
             - |
@@ -303,9 +297,6 @@ spec:
       containers:
         - name: start-job
           image: alpine/k8s:1.31.4
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
           volumeMounts:
             - name: kubectl-bin
               mountPath: /usr/local/bin
@@ -336,11 +327,6 @@ spec:
     metadata:
       labels:
         app: ollama
-      annotations:
-        config.linkerd.io/proxy-cpu-request: "1"
-        config.linkerd.io/proxy-cpu-limit: "1"
-        config.linkerd.io/proxy-memory-request: "128Mi"
-        config.linkerd.io/proxy-memory-limit: "128Mi"
     spec:
       runtimeClassName: nvidia
       initContainers:
@@ -367,13 +353,6 @@ spec:
               done < "$MODEL_FILE"
               echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
               kill $SERVER_PID; wait $SERVER_PID
-          resources:
-            requests:
-              cpu: "1"
-              memory: "4Gi"
-            limits:
-              cpu: "1"
-              memory: "4Gi"
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama/models
@@ -388,7 +367,7 @@ spec:
           env:
             - { name: OLLAMA_MAX_LOADED_MODELS, value: "1" }
             - { name: OLLAMA_NUM_PARALLEL,    value: "2" }
-            - { name: OLLAMA_THREADS,         value: "8" }
+            - { name: OLLAMA_THREADS,         value: "4" }
             - { name: OLLAMA_TIMEOUT,         value: "1200" }
             - { name: OLLAMA_GPU_MEMORY,      value: "15500" }
             - { name: OLLAMA_FLASH_ATTENTION, value: "true" }
@@ -419,11 +398,11 @@ spec:
             - containerPort: 11434
           resources:
             requests:
-              cpu: "8"
+              cpu: "4"
               memory: "12Gi"
               nvidia.com/gpu: 1
             limits:
-              cpu: "8"
+              cpu: "4"
               memory: "12Gi"
               nvidia.com/gpu: 1
           volumeMounts:
@@ -450,9 +429,6 @@ spec:
                 fi
                 sleep 120
               done
-          resources:
-            requests: { cpu: "1", memory: "64Mi" }
-            limits:   { cpu: "1", memory: "64Mi" }
           volumeMounts:
             - name: model-list
               mountPath: /opt/ollama-models
@@ -633,9 +609,6 @@ spec:
                   EOF
 
                   echo "✅ DATABASE_URL updated."
-              resources:
-                requests: { cpu: "50m", memory: "64Mi" }
-                limits:   { cpu: "200m", memory: "256Mi" }
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /usr/local/bin
@@ -692,9 +665,6 @@ spec:
           envFrom:
             - secretRef:
                 name: openwebui-db-url
-          resources:
-            requests: { cpu: "500m", memory: "512Mi" }
-            limits:   { cpu: "2000m", memory: "3Gi" }
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
