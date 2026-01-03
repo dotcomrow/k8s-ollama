@@ -819,6 +819,7 @@ spec:
             - |
               import json
               import os
+              import re
               import time
               import urllib.request
 
@@ -862,6 +863,80 @@ spec:
                       return [normalize(item) for item in obj]
                   return obj
 
+              def ensure_path_params(spec):
+                  path_re = re.compile(r"{([^}]+)}")
+                  paths = spec.get("paths", {})
+                  for path, methods in paths.items():
+                      if not isinstance(methods, dict):
+                          continue
+                      required = path_re.findall(path)
+                      if not required:
+                          continue
+                      path_level_params = methods.get("parameters")
+                      if path_level_params is None:
+                          path_level_params = []
+                          methods["parameters"] = path_level_params
+                      path_level_params = [
+                          p for p in path_level_params if isinstance(p, dict)
+                      ]
+                      for method, op in methods.items():
+                          if method.startswith("x-") or method == "parameters":
+                              continue
+                          if not isinstance(op, dict):
+                              continue
+                          op_params = op.get("parameters") or []
+                          op_params = [p for p in op_params if isinstance(p, dict)]
+                          existing = set(
+                              p.get("name")
+                              for p in path_level_params + op_params
+                              if p.get("in") == "path" and p.get("name")
+                          )
+                          missing = [p for p in required if p not in existing]
+                          if not missing:
+                              continue
+                          for param in missing:
+                              op_params.append(
+                                  {
+                                      "name": param,
+                                      "in": "path",
+                                      "required": True,
+                                      "schema": {"type": "string"},
+                                  }
+                              )
+                          op["parameters"] = op_params
+
+              def dedupe_operation_ids(spec):
+                  seen = {}
+                  paths = spec.get("paths", {})
+                  for path, methods in paths.items():
+                      if not isinstance(methods, dict):
+                          continue
+                      for method, op in methods.items():
+                          if method.startswith("x-") or method == "parameters":
+                              continue
+                          if not isinstance(op, dict):
+                              continue
+                          op_id = op.get("operationId")
+                          if not op_id:
+                              op_id = (
+                                  f"{method}_{path}"
+                                  .replace("/", "_")
+                                  .replace("{", "")
+                                  .replace("}", "")
+                              )
+                              op["operationId"] = op_id
+                          if op_id in seen:
+                              new_id = f"{op_id}_{method}"
+                              if new_id in seen:
+                                  idx = 2
+                                  while f"{op_id}_{idx}" in seen:
+                                      idx += 1
+                                  new_id = f"{op_id}_{idx}"
+                              op["operationId"] = new_id
+                              seen[new_id] = (path, method)
+                          else:
+                              seen[op_id] = (path, method)
+
               for attempt in range(1, 31):
                   try:
                       with urllib.request.urlopen(url, timeout=10) as resp:
@@ -870,6 +945,8 @@ spec:
                           data = json.load(resp)
                       data["openapi"] = "3.0.3"
                       normalize(data)
+                      ensure_path_params(data)
+                      dedupe_operation_ids(data)
                       with open(out_path, "w", encoding="utf-8") as handle:
                           json.dump(data, handle)
                       break
