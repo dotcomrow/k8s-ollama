@@ -776,18 +776,96 @@ metadata:
 
     # Optional overrides (leave empty to let sync controller generate)
     gravitee.io/definition-entrypoints: '[]'
-    teleport.dev/name: "open-webui"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "open-webui.teleport.app.suncoast.systems"
-    teleport.dev/description: "Open Web UI Service"
   labels:
     app: open-webui
     app.kubernetes.io/name: open-webui
     app.kubernetes.io/component: open-webui
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: open-webui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: open-webui-teleport-proxy
+  namespace: ollama
+data:
+  nginx.conf: |
+    events {}
+    http {
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+      }
+      server {
+        listen 8080;
+        server_name _;
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          proxy_buffering off;
+          proxy_read_timeout 3600;
+          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui-teleport-proxy
+  namespace: ollama
+  labels:
+    app: open-webui-teleport-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-webui-teleport-proxy
+  template:
+    metadata:
+      labels:
+        app: open-webui-teleport-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: open-webui-teleport-proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui-teleport
+  namespace: ollama
+  annotations:
+    teleport.dev/name: "open-webui"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "open-webui.teleport.app.suncoast.systems"
+    teleport.dev/description: "Open Web UI via Gravitee Gateway"
+  labels:
+    app: open-webui-teleport
+    teleport.dev/enroll: "true"
+spec:
+  selector:
+    app: open-webui-teleport-proxy
   ports:
     - name: http
       port: 80
@@ -957,7 +1035,7 @@ spec:
                       time.sleep(5)
           env:
             - name: OPENAPI_SOURCE_URL
-              value: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
+              value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/openapi.json"
           volumeMounts:
             - name: openapi
               mountPath: /openapi
@@ -988,6 +1066,75 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama-ingress-gravitee-only
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+          podSelector:
+            matchLabels:
+              app: gravitee-gateway
+      ports:
+        - protocol: TCP
+          port: 11434
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: open-webui-ingress-gravitee-only
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+          podSelector:
+            matchLabels:
+              app: gravitee-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: open-webui-openapi-ingress-gravitee-mgmt
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui-openapi
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+          podSelector:
+            matchLabels:
+              app: gravitee-management-api
+      ports:
+        - protocol: TCP
+          port: 8080
 ---
 apiVersion: gravitee.io/v1alpha1
 kind: Application
