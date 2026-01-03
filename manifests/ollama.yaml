@@ -862,6 +862,8 @@ spec:
     metadata:
       labels:
         app: open-webui-teleport-proxy
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       containers:
         - name: nginx
