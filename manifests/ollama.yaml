@@ -748,7 +748,7 @@ metadata:
     gravitee.io/definition-description: "Open WebUI backend API"
     gravitee.io/definition-version: "latest"
     gravitee.io/definition-type: "HTTP"
-    gravitee.io/definition-openapi-url: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
+    gravitee.io/definition-openapi-url: "http://open-webui-openapi.ollama.svc.cluster.local:8080/openapi.json"
     gravitee.io/definition-context-path: "/open-webui"
     gravitee.io/definition-visibility: "PUBLIC"
     gravitee.io/definition-state: "STARTED"
@@ -791,6 +791,125 @@ spec:
   ports:
     - name: http
       port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui-openapi
+  namespace: ollama
+  labels:
+    app: open-webui-openapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-webui-openapi
+  template:
+    metadata:
+      labels:
+        app: open-webui-openapi
+    spec:
+      restartPolicy: Always
+      initContainers:
+        - name: fetch-openapi
+          image: python:3.11-slim
+          command: ["python", "-c"]
+          args:
+            - |
+              import json
+              import os
+              import time
+              import urllib.request
+
+              url = os.environ.get(
+                  "OPENAPI_SOURCE_URL",
+                  "http://open-webui.ollama.svc.cluster.local:80/openapi.json",
+              )
+              out_path = "/openapi/openapi.json"
+
+              def normalize(obj):
+                  if isinstance(obj, dict):
+                      obj.pop("jsonSchemaDialect", None)
+                      t = obj.get("type")
+                      if isinstance(t, list) and "null" in t:
+                          t_no_null = [x for x in t if x != "null"]
+                          obj["nullable"] = True
+                          if len(t_no_null) == 1:
+                              obj["type"] = t_no_null[0]
+                          else:
+                              obj["type"] = t_no_null
+                      for key in ("anyOf", "oneOf"):
+                          if key in obj and isinstance(obj[key], list):
+                              items = obj[key]
+                              has_null = any(
+                                  isinstance(item, dict) and item.get("type") == "null"
+                                  for item in items
+                              )
+                              if has_null:
+                                  obj["nullable"] = True
+                                  items = [
+                                      item
+                                      for item in items
+                                      if not (isinstance(item, dict) and item.get("type") == "null")
+                                  ]
+                              obj[key] = [normalize(item) for item in items]
+                      for k, v in list(obj.items()):
+                          if k in ("anyOf", "oneOf"):
+                              continue
+                          obj[k] = normalize(v)
+                  elif isinstance(obj, list):
+                      return [normalize(item) for item in obj]
+                  return obj
+
+              for attempt in range(1, 31):
+                  try:
+                      with urllib.request.urlopen(url, timeout=10) as resp:
+                          if resp.status != 200:
+                              raise RuntimeError(f"unexpected status {resp.status}")
+                          data = json.load(resp)
+                      data["openapi"] = "3.0.3"
+                      normalize(data)
+                      with open(out_path, "w", encoding="utf-8") as handle:
+                          json.dump(data, handle)
+                      break
+                  except Exception as exc:
+                      if attempt == 30:
+                          raise
+                      print(f"OpenAPI fetch failed ({attempt}/30): {exc}")
+                      time.sleep(5)
+          env:
+            - name: OPENAPI_SOURCE_URL
+              value: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
+          volumeMounts:
+            - name: openapi
+              mountPath: /openapi
+      containers:
+        - name: openapi-server
+          image: python:3.11-slim
+          command: ["python", "-m", "http.server", "8080", "--directory", "/openapi"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: openapi
+              mountPath: /openapi
+      volumes:
+        - name: openapi
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui-openapi
+  namespace: ollama
+  labels:
+    app: open-webui-openapi
+spec:
+  selector:
+    app: open-webui-openapi
+  ports:
+    - name: http
+      port: 8080
       targetPort: 8080
 ---
 apiVersion: gravitee.io/v1alpha1
