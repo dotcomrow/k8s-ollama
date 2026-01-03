@@ -670,6 +670,75 @@ spec:
               secret:
                 secretName: vault-root-token
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-openwebui-model-params
+  namespace: ollama
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: openwebui
+      restartPolicy: OnFailure
+      containers:
+        - name: sync-model-params
+          image: postgres:16-alpine
+          command: ["sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              if [ -z "${DATABASE_URL:-}" ]; then
+                echo "DATABASE_URL is missing"
+                exit 1
+              fi
+
+              ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='administrator@suncoast.systems' limit 1" | tr -d '[:space:]')"
+              if [ -z "$ADMIN_ID" ]; then
+                echo "Admin user not found for administrator@suncoast.systems"
+                exit 1
+              fi
+
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_id="$ADMIN_ID" <<'SQL'
+              INSERT INTO openwebui.model (
+                id,
+                user_id,
+                base_model_id,
+                name,
+                meta,
+                params,
+                created_at,
+                updated_at,
+                access_control,
+                is_active
+              )
+              VALUES (
+                'deepseek-r1:14b',
+                :'admin_id',
+                'deepseek-r1:14b',
+                'deepseek-r1:14b',
+                '{}',
+                '{"think": false}',
+                EXTRACT(EPOCH FROM NOW())::bigint,
+                EXTRACT(EPOCH FROM NOW())::bigint,
+                NULL,
+                true
+              )
+              ON CONFLICT (id) DO UPDATE SET
+                params = EXCLUDED.params,
+                updated_at = EXCLUDED.updated_at;
+              SQL
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-url
+                  key: DATABASE_URL
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
