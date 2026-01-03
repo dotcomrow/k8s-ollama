@@ -535,6 +535,9 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["gravitee.io"]
+    resources: ["applications"]
+    verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -656,6 +659,15 @@ spec:
                   EOF
 
                   echo "✅ OIDC secrets updated."
+
+                  echo "🔐 Updating Gravitee application clientId..."
+                  if kubectl get application open-webui -n ollama >/dev/null 2>&1; then
+                    kubectl patch application open-webui -n ollama --type merge \
+                      -p "{\"spec\":{\"settings\":{\"app\":{\"type\":\"SIMPLE\",\"clientId\":\"${OIDC_CLIENT_ID}\"}}}}"
+                    echo "✅ Gravitee application updated."
+                  else
+                    echo "⚠️ Gravitee application not found; skipping."
+                  fi
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /usr/local/bin
@@ -1142,6 +1154,8 @@ kind: Application
 metadata:
   name: open-webui
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
 spec:
   contextRef:
     name: gravitee-default
@@ -1152,4 +1166,3 @@ spec:
   settings:
     app:
       type: SIMPLE
-      clientId: "openwebui-20250102-9f8d1c7b4a5e6f3d"
