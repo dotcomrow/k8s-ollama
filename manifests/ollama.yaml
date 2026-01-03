@@ -699,6 +699,8 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            - name: ENV
+              value: "dev"
             - name: OLLAMA_BASE_URL
               value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama"
             - name: OLLAMA_API_TIMEOUT
@@ -746,6 +748,7 @@ metadata:
     gravitee.io/definition-description: "Open WebUI backend API"
     gravitee.io/definition-version: "latest"
     gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-openapi-url: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
     gravitee.io/definition-context-path: "/open-webui"
     gravitee.io/definition-visibility: "PUBLIC"
     gravitee.io/definition-state: "STARTED"
@@ -765,7 +768,7 @@ metadata:
     # Definition JSON fields (raw JSON strings)
     gravitee.io/definition-metadata: '{"owner":"ai","slack":"#ai"}'
     gravitee.io/definition-properties: '{"tier":"prod","region":"us-central1"}'
-    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"open-webui-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://open-webui.ollama.svc.cluster.local:80"},"secondary":false}]}]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":60000,"idleTimeout":60000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"open-webui-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://open-webui.ollama.svc.cluster.local:80"},"secondary":false}]}]'
     gravitee.io/definition-resources: '[]'
     gravitee.io/definition-plans: '{"open-access":{"name":"Open access","description":"No auth","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API"}}'
     gravitee.io/definition-flows: '[]'
@@ -789,3 +792,19 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+---
+apiVersion: gravitee.io/v1alpha1
+kind: Application
+metadata:
+  name: open-webui
+  namespace: ollama
+spec:
+  contextRef:
+    name: gravitee-default
+    namespace: k8s-api-gateway
+  name: open-webui
+  description: OpenWebUI client consuming Ollama APIs
+  domain: open-webui.teleport.app.suncoast.systems
+  settings:
+    app:
+      type: SIMPLE
