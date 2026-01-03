@@ -814,11 +814,15 @@ data:
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Connection "";
           proxy_set_header Accept-Encoding "";
+          proxy_set_header Accept "text/event-stream";
           proxy_buffering off;
           proxy_cache off;
           proxy_request_buffering off;
           proxy_read_timeout 3600;
           proxy_send_timeout 3600;
+          chunked_transfer_encoding on;
+          proxy_hide_header Content-Type;
+          add_header Content-Type "text/event-stream; charset=utf-8" always;
           add_header Cache-Control "no-cache";
           add_header X-Accel-Buffering "no";
           proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/api/chat/completions;
