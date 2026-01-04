@@ -68,6 +68,8 @@ kind: Job
 metadata:
   name: openwebui-yugabyte-config
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 1
   template:
@@ -239,6 +241,8 @@ kind: Job
 metadata:
   name: copy-ollama-vault-root-token
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 1
   template:
@@ -286,6 +290,8 @@ kind: Job
 metadata:
   name: start-database-url-rotation-job
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 1
   template:
