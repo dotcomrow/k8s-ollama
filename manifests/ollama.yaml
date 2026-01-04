@@ -1270,7 +1270,7 @@ spec:
     name: open-webui
     namespace: ollama
     kind: Application
-  plan: "Keycloak OAuth2"
+  plan: keycloak-oauth2
 ---
 apiVersion: gravitee.io/v1alpha1
 kind: Subscription
@@ -1288,4 +1288,4 @@ spec:
     name: open-webui
     namespace: ollama
     kind: Application
-  plan: "Keycloak OAuth2"
+  plan: keycloak-oauth2
