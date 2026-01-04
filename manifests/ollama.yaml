@@ -71,9 +71,6 @@ metadata:
 spec:
   backoffLimit: 1
   template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -245,9 +242,6 @@ metadata:
 spec:
   backoffLimit: 1
   template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -295,9 +289,6 @@ metadata:
 spec:
   backoffLimit: 1
   template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -564,9 +555,6 @@ spec:
     spec:
       backoffLimit: 1
       template:
-        metadata:
-          annotations:
-            linkerd.io/inject: disabled
         spec:
           serviceAccountName: openwebui
           restartPolicy: Never
@@ -671,73 +659,101 @@ spec:
                 secretName: vault-root-token
 ---
 apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: sync-openwebui-model-params
   namespace: ollama
 spec:
-  backoffLimit: 1
-  template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
     spec:
-      serviceAccountName: openwebui
-      restartPolicy: OnFailure
-      containers:
-        - name: sync-model-params
-          image: postgres:16-alpine
-          command: ["sh","-c"]
-          args:
-            - |
-              set -euo pipefail
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: openwebui
+          restartPolicy: OnFailure
+          containers:
+            - name: sync-model-params
+              image: postgres:16-alpine
+              command: ["sh","-c"]
+              args:
+                - |
+                  set -euo pipefail
 
-              if [ -z "${DATABASE_URL:-}" ]; then
-                echo "DATABASE_URL is missing"
-                exit 1
-              fi
+                  if [ -z "${DATABASE_URL:-}" ]; then
+                    echo "DATABASE_URL is missing"
+                    exit 1
+                  fi
 
-              ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='administrator@suncoast.systems' limit 1" | tr -d '[:space:]')"
-              if [ -z "$ADMIN_ID" ]; then
-                echo "Admin user not found for administrator@suncoast.systems"
-                exit 1
-              fi
+                  apk add --no-cache curl jq >/dev/null
 
-              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_id="$ADMIN_ID" <<'SQL'
-              INSERT INTO openwebui.model (
-                id,
-                user_id,
-                base_model_id,
-                name,
-                meta,
-                params,
-                created_at,
-                updated_at,
-                access_control,
-                is_active
-              )
-              VALUES (
-                'deepseek-r1:14b',
-                :'admin_id',
-                'deepseek-r1:14b',
-                'deepseek-r1:14b',
-                '{}',
-                '{"think": false}',
-                EXTRACT(EPOCH FROM NOW())::bigint,
-                EXTRACT(EPOCH FROM NOW())::bigint,
-                NULL,
-                true
-              )
-              ON CONFLICT (id) DO UPDATE SET
-                params = EXCLUDED.params,
-                updated_at = EXCLUDED.updated_at;
-              SQL
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: openwebui-db-url
-                  key: DATABASE_URL
+                  ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='administrator@suncoast.systems' limit 1" | tr -d '[:space:]')"
+                  if [ -z "$ADMIN_ID" ]; then
+                    echo "Admin user not found for administrator@suncoast.systems"
+                    exit 1
+                  fi
+
+                  MODELS_JSON=""
+                  for _ in 1 2 3 4 5; do
+                    if MODELS_JSON="$(curl -fsS "$OLLAMA_TAGS_URL")"; then
+                      break
+                    fi
+                    sleep 3
+                  done
+
+                  if [ -z "$MODELS_JSON" ]; then
+                    echo "Failed to fetch Ollama model list"
+                    exit 1
+                  fi
+
+                  echo "$MODELS_JSON" | jq -r '.models[].model' | sort -u | while read -r model_id; do
+                    if [ -z "$model_id" ]; then
+                      continue
+                    fi
+                    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_id="$ADMIN_ID" -v model_id="$model_id" <<'SQL'
+                    INSERT INTO openwebui.model (
+                      id,
+                      user_id,
+                      base_model_id,
+                      name,
+                      meta,
+                      params,
+                      created_at,
+                      updated_at,
+                      access_control,
+                      is_active
+                    )
+                    VALUES (
+                      :'model_id',
+                      :'admin_id',
+                      NULL,
+                      :'model_id',
+                      '{}',
+                      '{"think": false}',
+                      EXTRACT(EPOCH FROM NOW())::bigint,
+                      EXTRACT(EPOCH FROM NOW())::bigint,
+                      NULL,
+                      true
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                      params = CASE
+                        WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{"think": false}'
+                        WHEN (openwebui.model.params::jsonb ? 'think') THEN openwebui.model.params
+                        ELSE (openwebui.model.params::jsonb || '{"think": false}'::jsonb)::text
+                      END,
+                      updated_at = EXCLUDED.updated_at;
+                    SQL
+                  done
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: openwebui-db-url
+                      key: DATABASE_URL
+                - name: OLLAMA_TAGS_URL
+                  value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama/api/tags"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -759,8 +775,6 @@ spec:
     metadata:
       labels:
         app: open-webui
-      annotations:
-        linkerd.io/inject: disabled
     spec:
       serviceAccountName: openwebui
       containers:
@@ -931,8 +945,6 @@ spec:
     metadata:
       labels:
         app: open-webui-teleport-proxy
-      annotations:
-        linkerd.io/inject: disabled
     spec:
       containers:
         - name: nginx
