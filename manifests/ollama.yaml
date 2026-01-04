@@ -672,6 +672,8 @@ kind: CronJob
 metadata:
   name: sync-openwebui-model-params
   namespace: ollama
+  annotations:
+    linkerd.io/inject: disabled
 spec:
   schedule: "0 * * * *"
   successfulJobsHistoryLimit: 1
