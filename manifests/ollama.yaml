@@ -1259,6 +1259,8 @@ kind: Subscription
 metadata:
   name: open-webui-ollama
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-options: "Replace=true"
 spec:
   api:
     name: ollama
@@ -1275,6 +1277,8 @@ kind: Subscription
 metadata:
   name: open-webui-api
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-options: "Replace=true"
 spec:
   api:
     name: open-webui
