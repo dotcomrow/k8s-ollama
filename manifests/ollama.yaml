@@ -1260,7 +1260,7 @@ metadata:
   name: open-webui-ollama
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-options: "Replace=true"
+    argocd.argoproj.io/sync-options: "Replace=true,Force=true"
 spec:
   api:
     name: ollama
@@ -1278,7 +1278,7 @@ metadata:
   name: open-webui-api
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-options: "Replace=true"
+    argocd.argoproj.io/sync-options: "Replace=true,Force=true"
 spec:
   api:
     name: open-webui
