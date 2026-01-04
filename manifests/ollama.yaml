@@ -733,39 +733,7 @@ spec:
                     if [ -z "$model_id" ]; then
                       continue
                     fi
-                    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_id="$ADMIN_ID" -v model_id="$model_id" <<'SQL'
-                    INSERT INTO openwebui.model (
-                      id,
-                      user_id,
-                      base_model_id,
-                      name,
-                      meta,
-                      params,
-                      created_at,
-                      updated_at,
-                      access_control,
-                      is_active
-                    )
-                    VALUES (
-                      :'model_id',
-                      :'admin_id',
-                      NULL,
-                      :'model_id',
-                      '{}',
-                      '{"think": false}',
-                      EXTRACT(EPOCH FROM NOW())::bigint,
-                      EXTRACT(EPOCH FROM NOW())::bigint,
-                      NULL,
-                      true
-                    )
-                    ON CONFLICT (id) DO UPDATE SET
-                      params = CASE
-                        WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{"think": false}'
-                        WHEN (openwebui.model.params::jsonb ? 'think') THEN openwebui.model.params
-                        ELSE (openwebui.model.params::jsonb || '{"think": false}'::jsonb)::text
-                      END,
-                      updated_at = EXCLUDED.updated_at;
-                    SQL
+                    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_id="$ADMIN_ID" -v model_id="$model_id" -c "INSERT INTO openwebui.model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, access_control, is_active) VALUES (:'model_id', :'admin_id', NULL, :'model_id', '{}', '{\"think\": false}', EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint, NULL, true) ON CONFLICT (id) DO UPDATE SET params = CASE WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{\"think\": false}' WHEN (openwebui.model.params::jsonb ? 'think') THEN openwebui.model.params ELSE (openwebui.model.params::jsonb || '{\"think\": false}'::jsonb)::text END, updated_at = EXCLUDED.updated_at;"
                   done
               env:
                 - name: DATABASE_URL
