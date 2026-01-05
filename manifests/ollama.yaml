@@ -1273,6 +1273,7 @@ spec:
         - protocol: TCP
           port: 8080
 ---
+apiVersion: gravitee.io/v1alpha1
 kind: Application
 metadata:
   name: open-webui
