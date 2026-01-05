@@ -1343,7 +1343,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "5"
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   api:
     name: ollama
@@ -1362,7 +1362,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "5"
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   api:
     name: open-webui
