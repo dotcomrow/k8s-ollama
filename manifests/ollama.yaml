@@ -164,7 +164,9 @@ spec:
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               -- ensure schema
               CREATE SCHEMA IF NOT EXISTS openwebui;
-              ALTER SCHEMA openwebui OWNER TO openwebui_login;
+              ALTER SCHEMA openwebui OWNER TO $OWNER_LOGIN;
+              GRANT USAGE, CREATE ON SCHEMA openwebui TO $OWNER_LOGIN;
+              ALTER ROLE $OWNER_LOGIN SET search_path = openwebui, public;
 
               -- reassign all existing tables
               DO \$\$
@@ -647,7 +649,9 @@ spec:
                     sleep "$RETRY_INTERVAL"
                   done
 
-                  DB_URL="postgresql://${USERNAME}:${PASSWORD}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
+                  USERNAME_ENC=$(printf '%s' "$USERNAME" | jq -sRr @uri)
+                  PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
+                  DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
 
                   echo "🔐 Creating/updating Kubernetes secret..."
                   cat <<EOF | kubectl apply -f -
