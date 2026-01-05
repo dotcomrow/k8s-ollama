@@ -865,7 +865,7 @@ metadata:
     gravitee.io/definition-description: "Open WebUI backend API"
     gravitee.io/definition-version: "latest"
     gravitee.io/definition-type: "HTTP"
-    gravitee.io/definition-openapi-url: "http://open-webui-openapi.ollama.svc.cluster.local:8080/openapi.json"
+    gravitee.io/definition-openapi-url: "http://open-webui-openapi.ollama.svc.cluster.local:8080/openapi.json?source=openwebui"
     gravitee.io/definition-context-path: "/open-webui"
     gravitee.io/definition-visibility: "PUBLIC"
     gravitee.io/definition-state: "STARTED"
