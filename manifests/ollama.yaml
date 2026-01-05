@@ -1178,7 +1178,7 @@ spec:
                       time.sleep(5)
           env:
             - name: OPENAPI_SOURCE_URL
-              value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/openapi.json"
+              value: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
           volumeMounts:
             - name: openapi
               mountPath: /openapi
@@ -1252,6 +1252,9 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - podSelector:
+            matchLabels:
+              app: open-webui-openapi
       ports:
         - protocol: TCP
           port: 8080
