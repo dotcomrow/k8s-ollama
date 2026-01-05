@@ -500,9 +500,9 @@ metadata:
     # Definition JSON fields (raw JSON strings)
     gravitee.io/definition-metadata: '{"owner":"ai","slack":"#ai"}'
     gravitee.io/definition-properties: '{"tier":"prod","region":"us-central1"}'
-    gravitee.io/definition-resources: '[{"name":"keycloak-introspection","type":"oauth2","enabled":true,"configuration":{"introspectionEndpoint":"https://auth.suncoast.systems/realms/master/protocol/openid-connect/token/introspect","introspectionEndpointMethod":"POST","clientAuthorizationHeaderName":"Authorization","clientAuthorizationHeaderScheme":"Basic","clientId":"<path:secret/data/keycloak-client-id-gravitee-introspection#value>","clientSecret":"<path:secret/data/keycloak-client-secret-gravitee-introspection#value>","tokenIsSuppliedByQueryParam":true,"tokenQueryParamName":"token","useClientAuthorizationHeader":true,"useSystemProxy":false}}]'
+    gravitee.io/definition-resources: '[]'
     gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/api/ps","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"ollama-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://ollama.ollama.svc.cluster.local:11434"},"secondary":false}]}]'
-    gravitee.io/definition-plans: '{"keycloak-oauth2":{"name":"Keycloak OAuth2","description":"Keycloak OAuth2 access (introspection)","security":{"type":"OAUTH2","configuration":{"oauthResource":"keycloak-introspection","extractPayload":false,"checkRequiredScopes":true,"requiredScopes":["ollama_access"],"addWwwAuthenticateHeader":true}},"status":"PUBLISHED","validation":"AUTO","type":"API"}}'
+    gravitee.io/definition-plans: '{"open-access":{"name":"Open access","description":"No auth","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API"}}'
     gravitee.io/definition-flows: '[]'
     gravitee.io/definition-response-templates: '{}'
     gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
@@ -875,8 +875,8 @@ metadata:
     gravitee.io/definition-metadata: '{"owner":"ai","slack":"#ai"}'
     gravitee.io/definition-properties: '{"tier":"prod","region":"us-central1"}'
     gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"open-webui-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://open-webui.ollama.svc.cluster.local:80"},"secondary":false}]}]'
-    gravitee.io/definition-resources: '[{"name":"keycloak-introspection","type":"oauth2","enabled":true,"configuration":{"introspectionEndpoint":"https://auth.suncoast.systems/realms/master/protocol/openid-connect/token/introspect","introspectionEndpointMethod":"POST","clientAuthorizationHeaderName":"Authorization","clientAuthorizationHeaderScheme":"Basic","clientId":"<path:secret/data/keycloak-client-id-gravitee-introspection#value>","clientSecret":"<path:secret/data/keycloak-client-secret-gravitee-introspection#value>","tokenIsSuppliedByQueryParam":true,"tokenQueryParamName":"token","useClientAuthorizationHeader":true,"useSystemProxy":false}}]'
-    gravitee.io/definition-plans: '{"keycloak-oauth2":{"name":"Keycloak OAuth2","description":"Keycloak OAuth2 access (introspection)","security":{"type":"OAUTH2","configuration":{"oauthResource":"keycloak-introspection","extractPayload":false,"checkRequiredScopes":true,"requiredScopes":["openwebui_access"],"addWwwAuthenticateHeader":true}},"selectionRule":"{#request.path.startsWith(''/open-webui/api/'') || #request.path.startsWith(''/api/'')}","status":"PUBLISHED","validation":"AUTO","type":"API"},"open-access":{"name":"Open access","description":"No auth","security":{"type":"KEY_LESS"},"selectionRule":"{!(#request.path.startsWith(''/open-webui/api/'') || #request.path.startsWith(''/api/''))}","status":"PUBLISHED","validation":"AUTO","type":"API"}}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-plans: '{"open-access":{"name":"Open access","description":"No auth","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API"}}'
     gravitee.io/definition-flows: '[]'
     gravitee.io/definition-response-templates: '{}'
     gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
@@ -1347,7 +1347,7 @@ spec:
     name: open-webui
     namespace: ollama
     kind: Application
-  plan: keycloak-oauth2
+  plan: open-access
 ---
 apiVersion: gravitee.io/v1alpha1
 kind: Subscription
@@ -1365,4 +1365,4 @@ spec:
     name: open-webui
     namespace: ollama
     kind: Application
-  plan: keycloak-oauth2
+  plan: open-access
