@@ -68,6 +68,8 @@ kind: Job
 metadata:
   name: openwebui-yugabyte-config
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 1
   template:
