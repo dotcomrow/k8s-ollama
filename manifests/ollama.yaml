@@ -1334,5 +1334,3 @@ spec:
               }
               wait_plan ollama
               wait_plan open-webui
----
-apiVersion: gravitee.io/v1alpha1
