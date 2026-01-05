@@ -69,7 +69,7 @@ metadata:
   name: openwebui-yugabyte-config
   namespace: vault
   annotations:
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 1
   template:
