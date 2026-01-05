@@ -587,6 +587,8 @@ kind: CronJob
 metadata:
   name: sync-openwebui-db-secret
   namespace: ollama
+  annotations:
+    linkerd.io/inject: disabled
 spec:
   schedule: "0 0 * * *"
   successfulJobsHistoryLimit: 1
@@ -595,6 +597,9 @@ spec:
     spec:
       backoffLimit: 1
       template:
+        metadata:
+          annotations:
+            linkerd.io/inject: disabled
         spec:
           serviceAccountName: openwebui
           restartPolicy: Never
@@ -1314,10 +1319,10 @@ spec:
               set -eu
               wait_plan() {
                 api_name="$1"
-                echo "Waiting for plan keycloak-oauth2 on ${api_name}..."
+                echo "Waiting for plan open-access on ${api_name}..."
                 i=0
                 while [ "$i" -lt 60 ]; do
-                  plan_id="$(kubectl -n ollama get apiv4definition "$api_name" -o jsonpath='{.status.plans.keycloak-oauth2}' 2>/dev/null || true)"
+                  plan_id="$(kubectl -n ollama get apiv4definition "$api_name" -o jsonpath='{.status.plans.open-access}' 2>/dev/null || true)"
                   if [ -n "$plan_id" ]; then
                     echo "Found plan for ${api_name}: ${plan_id}"
                     return 0
