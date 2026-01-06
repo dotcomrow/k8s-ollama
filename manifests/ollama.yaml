@@ -80,15 +80,6 @@ data:
     # ENABLE_SIGNUP=false
     # WEBUI_URL: https://open-webui.example.com
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: openwebui-openai
-  namespace: ollama
-type: Opaque
-stringData:
-  OPENAI_API_KEY: ""
----
 # ONE-TIME DB + VAULT SETUP (owner + static role)
 apiVersion: batch/v1
 kind: Job
@@ -323,6 +314,10 @@ kind: Job
 metadata:
   name: start-database-url-rotation-job
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: 1
   template:
@@ -330,7 +325,7 @@ spec:
       annotations:
         linkerd.io/inject: disabled
     spec:
-      serviceAccountName: default
+      serviceAccountName: openwebui
       restartPolicy: Never
       volumes:
         - name: kubectl-bin
@@ -352,12 +347,43 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              echo "🔁 Triggering sync-openwebui-db-secret-now from CronJob..."
-              until kubectl create job --from=cronjob/sync-openwebui-db-secret sync-openwebui-db-secret-now -n ollama; do
+              set -eu
+
+              wait_for_secret_key() {
+                secret_name="$1"
+                key_name="$2"
+                i=0
+                while [ "$i" -lt 60 ]; do
+                  value="$(kubectl -n ollama get secret "$secret_name" -o jsonpath="{.data.${key_name}}" 2>/dev/null || true)"
+                  if [ -n "$value" ]; then
+                    echo "✅ ${secret_name}/${key_name} ready"
+                    return 0
+                  fi
+                  i=$((i + 1))
+                  echo "⏳ Waiting for ${secret_name}/${key_name}..."
+                  sleep 5
+                done
+                echo "❌ Timed out waiting for ${secret_name}/${key_name}"
+                return 1
+              }
+
+              JOB_NAME="sync-openwebui-db-secret-now"
+              echo "🔁 Triggering ${JOB_NAME} from CronJob..."
+              kubectl delete job "$JOB_NAME" -n ollama --ignore-not-found=true
+              until kubectl create job --from=cronjob/sync-openwebui-db-secret "$JOB_NAME" -n ollama; do
                 echo "⏳ Waiting for CronJob..."
                 sleep 3
               done
-              echo "✅ Job created"
+
+              echo "⏳ Waiting for ${JOB_NAME} to complete..."
+              kubectl wait --for=condition=complete "job/${JOB_NAME}" -n ollama --timeout=600s
+
+              wait_for_secret_key openwebui-db-url DATABASE_URL
+              wait_for_secret_key openwebui-oidc-secrets OAUTH_CLIENT_ID
+              wait_for_secret_key openwebui-oidc-secrets OAUTH_CLIENT_SECRET
+              wait_for_secret_key openwebui-openai OPENAI_API_KEY
+
+              echo "✅ OpenWebUI secrets ready"
 ---
 # OLLAMA (unchanged functionally)
 apiVersion: apps/v1
@@ -566,6 +592,12 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -619,6 +651,7 @@ metadata:
   name: sync-openwebui-db-secret
   namespace: ollama
   annotations:
+    argocd.argoproj.io/sync-wave: "0"
     linkerd.io/inject: disabled
 spec:
   schedule: "0 0 * * *"
@@ -848,6 +881,7 @@ metadata:
   labels:
     app: open-webui
   annotations:
+    argocd.argoproj.io/sync-wave: "2"
     reloader.stakater.com/auto: "true"
     reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"
