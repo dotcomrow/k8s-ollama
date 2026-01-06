@@ -40,7 +40,6 @@ metadata:
   namespace: ollama
 data:
   models.txt: |
-    # default: deepseek-r1:14b
     deepseek-r1:14b
 ---
 apiVersion: v1
@@ -458,19 +457,7 @@ spec:
               apt install wget -y
               nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
               apt update && apt install wget curl -y
-              MODEL_FILE="/opt/ollama-models/models.txt"
-              DEFAULT_MODEL=$(grep '^# default:' "$MODEL_FILE" | awk -F': ' '{print $2}' | xargs)
-              echo "Default model: $DEFAULT_MODEL"
               export OLLAMA_NO_CPU_OFFLOAD=1
-              (
-                echo "⏳ Waiting for Ollama to be ready..."
-                until wget --spider -q http://localhost:11434/api/tags; do echo "Waiting..."; sleep 1; done
-                echo "🔥 Warming up default model: $DEFAULT_MODEL"
-                curl -s -X POST http://localhost:11434/api/generate \
-                  -H "Content-Type: application/json" \
-                  -d "{\"model\": \"$DEFAULT_MODEL\", \"prompt\": \" \", \"stream\": false}" >/dev/null
-                echo "✅ Default model warmed."
-              ) &
               exec ollama serve
           ports:
             - containerPort: 11434
