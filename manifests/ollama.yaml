@@ -62,6 +62,24 @@ data:
   OAUTH_USERNAME_CLAIM: "preferred_username"
   WEBUI_URL: "https://open-webui.teleport.app.suncoast.systems"
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openwebui-config
+  namespace: ollama
+data:
+  openwebui.env: |
+    # Optional env-style config (KEY=VALUE). Leave empty to use only envFrom.
+    # Example:
+    # ENABLE_SIGNUP=false
+    # WEBUI_URL=https://open-webui.example.com
+    OPENAI_API_BASE_URL=https://api.openai.com/v1
+  openwebui.properties: |
+    # Optional properties-style config. Supports "key=value" or "key: value".
+    # Example:
+    # ENABLE_SIGNUP=false
+    # WEBUI_URL: https://open-webui.example.com
+---
 # ONE-TIME DB + VAULT SETUP (owner + static role)
 apiVersion: batch/v1
 kind: Job
@@ -696,6 +714,31 @@ spec:
 
                   echo "✅ OIDC secrets updated."
 
+                  while true; do
+                    OPENAI_API_KEY=$(vault kv get -field=value secret/open_ai_key 2>/tmp/vault_err.log || true)
+                    if [ -n "$OPENAI_API_KEY" ]; then
+                      echo "✅ Got OpenAI API key"
+                      break
+                    fi
+                    echo "⚠️ OpenAI API key not available yet. Retrying..."
+                    cat /tmp/vault_err.log
+                    sleep "$RETRY_INTERVAL"
+                  done
+
+                  echo "🔐 Creating/updating Kubernetes secret for OpenAI..."
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: openwebui-openai
+                    namespace: ollama
+                  type: Opaque
+                  stringData:
+                    OPENAI_API_KEY: ${OPENAI_API_KEY}
+                  EOF
+
+                  echo "✅ OpenAI secret updated."
+
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /usr/local/bin
@@ -797,8 +840,8 @@ metadata:
     app: open-webui
   annotations:
     reloader.stakater.com/auto: "true"
-    reloader.stakater.com/configmap: "openwebui-oidc-config"
-    reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
+    reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config"
+    reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"
 spec:
   replicas: 1
   selector:
@@ -813,6 +856,79 @@ spec:
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
+          workingDir: /app/backend
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              trim() {
+                value="$1"
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+                printf '%s' "$value"
+              }
+
+              has_env_assignments() {
+                file="$1"
+                while IFS= read -r line || [ -n "$line" ]; do
+                  case "$line" in
+                    ""|\#*|\;*) continue ;;
+                    *"="*) return 0 ;;
+                  esac
+                done < "$file"
+                return 1
+              }
+
+              has_props_assignments() {
+                file="$1"
+                while IFS= read -r line || [ -n "$line" ]; do
+                  case "$line" in
+                    ""|\#*|\;*) continue ;;
+                    *"="*|*":"*) return 0 ;;
+                  esac
+                done < "$file"
+                return 1
+              }
+
+              CONFIG_ENV="/config/openwebui.env"
+              CONFIG_PROPS="/config/openwebui.properties"
+
+              if [ -f "$CONFIG_ENV" ] && has_env_assignments "$CONFIG_ENV"; then
+                echo "Loading OpenWebUI env config from $CONFIG_ENV"
+                set -a
+                . "$CONFIG_ENV"
+                set +a
+              elif [ -f "$CONFIG_PROPS" ] && has_props_assignments "$CONFIG_PROPS"; then
+                echo "Loading OpenWebUI properties config from $CONFIG_PROPS"
+                while IFS= read -r line || [ -n "$line" ]; do
+                  case "$line" in
+                    ""|\#*|\;*) continue ;;
+                  esac
+                  case "$line" in
+                    *"="*)
+                      key="${line%%=*}"
+                      value="${line#*=}"
+                      ;;
+                    *":"*)
+                      key="${line%%:*}"
+                      value="${line#*:}"
+                      ;;
+                    *)
+                      continue
+                      ;;
+                  esac
+                  key="$(trim "$key")"
+                  value="$(trim "$value")"
+                  if [ -n "$key" ]; then
+                    export "$key=$value"
+                  fi
+                done < "$CONFIG_PROPS"
+              else
+                echo "No OpenWebUI config file found in /config; continuing with env vars"
+              fi
+
+              exec bash start.sh
           ports:
             - containerPort: 8080
           env:
@@ -836,10 +952,18 @@ spec:
                 name: openwebui-db-url
             - secretRef:
                 name: openwebui-oidc-secrets
+            - secretRef:
+                name: openwebui-openai
           volumeMounts:
+            - name: openwebui-config
+              mountPath: /config
+              readOnly: true
             - name: webui-data
               mountPath: /app/backend/data
       volumes:
+        - name: openwebui-config
+          configMap:
+            name: openwebui-config
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
