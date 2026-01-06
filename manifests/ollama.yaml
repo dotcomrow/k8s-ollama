@@ -394,6 +394,8 @@ metadata:
   labels:
     app: ollama
 spec:
+  strategy:
+    type: Recreate
   replicas: 1
   selector:
     matchLabels:
@@ -442,6 +444,7 @@ spec:
           securityContext:
             capabilities: { add: ["SYS_ADMIN"] }
           env:
+            - { name: OLLAMA_KEEP_ALIVE,      value: "-1" }
             - { name: OLLAMA_MAX_LOADED_MODELS, value: "1" }
             - { name: OLLAMA_NUM_PARALLEL,    value: "2" }
             - { name: OLLAMA_THREADS,         value: "4" }
@@ -473,28 +476,6 @@ spec:
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama/models
-            - name: model-list
-              mountPath: /opt/ollama-models
-              readOnly: true
-        - name: keep-warm
-          image: alpine:latest
-          command: ["/bin/sh","-c"]
-          args:
-            - |
-              apk add --no-cache wget jq >/dev/null 2>&1
-              while true; do
-                ACTIVE_MODEL=$(wget -qO- http://localhost:11434/api/tags | jq -r '.models[0].name')
-                if [ -n "$ACTIVE_MODEL" ] && [ "$ACTIVE_MODEL" != "null" ]; then
-                  echo "🔄 Keeping model $ACTIVE_MODEL warm..."
-                  wget -qO- --header="Content-Type: application/json" \
-                    --post-data="{\"model\": \"$ACTIVE_MODEL\", \"prompt\": \" \", \"stream\": false}" \
-                    http://localhost:11434/api/generate >/dev/null
-                else
-                  echo "⚠️ No active model loaded."
-                fi
-                sleep 120
-              done
-          volumeMounts:
             - name: model-list
               mountPath: /opt/ollama-models
               readOnly: true
@@ -818,6 +799,9 @@ spec:
                 - |
                   set -euo pipefail
 
+                  DEFAULT_MODEL_ID="deepseek-r1:14b"
+                  KEEP_ALIVE_DEFAULT="-1"
+
                   if [ -z "${DATABASE_URL:-}" ]; then
                     echo "DATABASE_URL is missing"
                     exit 1
@@ -851,6 +835,11 @@ spec:
                     MODEL_ID_SQL="$(printf "%s" "$model_id" | sed "s/'/''/g")"
                     ADMIN_ID_SQL="$(printf "%s" "$ADMIN_ID" | sed "s/'/''/g")"
                     psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO openwebui.model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, access_control, is_active) VALUES ('${MODEL_ID_SQL}', '${ADMIN_ID_SQL}', NULL, '${MODEL_ID_SQL}', '{}', '{\"think\": false}', EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint, NULL, true) ON CONFLICT (id) DO UPDATE SET params = CASE WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{\"think\": false}' WHEN (openwebui.model.params::jsonb ? 'think') THEN openwebui.model.params ELSE (openwebui.model.params::jsonb || '{\"think\": false}'::jsonb)::text END, updated_at = EXCLUDED.updated_at;"
+
+                    if [ "$model_id" = "$DEFAULT_MODEL_ID" ]; then
+                      KEEP_ALIVE_SQL="$(printf "%s" "$KEEP_ALIVE_DEFAULT" | sed "s/'/''/g")"
+                      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "UPDATE openwebui.model SET params = CASE WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{\"keep_alive\": \"${KEEP_ALIVE_SQL}\"}' WHEN (openwebui.model.params::jsonb ? 'keep_alive') THEN openwebui.model.params ELSE (openwebui.model.params::jsonb || '{\"keep_alive\": \"${KEEP_ALIVE_SQL}\"}'::jsonb)::text END WHERE id='${MODEL_ID_SQL}';"
+                    fi
                   done
               env:
                 - name: DATABASE_URL
