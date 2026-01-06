@@ -54,7 +54,7 @@ data:
   ENABLE_LOGIN_FORM: "false"
   ENABLE_PASSWORD_AUTH: "false"
   ENABLE_SIGNUP: "false"
-  OPENID_PROVIDER_URL: "https://auth.suncoast.systems/realms/master/.well-known/openid-configuration"
+  OPENID_PROVIDER_URL: "https://auth.suncoast.systems/realms/internal/.well-known/openid-configuration"
   OPENID_REDIRECT_URI: "https://open-webui.teleport.app.suncoast.systems/oauth/oidc/login/callback"
   OAUTH_SCOPES: "openid email profile"
   OAUTH_CODE_CHALLENGE_METHOD: "S256"
