@@ -938,12 +938,17 @@ spec:
               CONFIG_ENV="/config/openwebui.env"
               CONFIG_PROPS="/config/openwebui.properties"
 
+              loaded_any=0
+
               if [ -f "$CONFIG_ENV" ] && has_env_assignments "$CONFIG_ENV"; then
                 echo "Loading OpenWebUI env config from $CONFIG_ENV"
                 set -a
                 . "$CONFIG_ENV"
                 set +a
-              elif [ -f "$CONFIG_PROPS" ] && has_props_assignments "$CONFIG_PROPS"; then
+                loaded_any=1
+              fi
+
+              if [ -f "$CONFIG_PROPS" ] && has_props_assignments "$CONFIG_PROPS"; then
                 echo "Loading OpenWebUI properties config from $CONFIG_PROPS"
                 while IFS= read -r line || [ -n "$line" ]; do
                   case "$line" in
@@ -968,7 +973,10 @@ spec:
                     export "$key=$value"
                   fi
                 done < "$CONFIG_PROPS"
-              else
+                loaded_any=1
+              fi
+
+              if [ "$loaded_any" -eq 0 ]; then
                 echo "No OpenWebUI config file found in /config; continuing with env vars"
               fi
 
