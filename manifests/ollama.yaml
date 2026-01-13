@@ -1550,6 +1550,8 @@ spec:
       ports:
         - protocol: TCP
           port: 11434
+        - protocol: TCP
+          port: 4143
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -1576,6 +1578,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+        - protocol: TCP
+          port: 4143
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -1599,6 +1603,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+        - protocol: TCP
+          port: 4143
 ---
 apiVersion: batch/v1
 kind: Job
