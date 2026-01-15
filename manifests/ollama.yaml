@@ -1601,6 +1601,21 @@ spec:
                           else:
                               seen[op_id] = (path, method)
 
+              def write_stub():
+                  if os.path.exists(out_path):
+                      return
+                  stub = {
+                      "openapi": "3.0.3",
+                      "info": {
+                          "title": "Open WebUI API",
+                          "version": "0.0.0",
+                      },
+                      "paths": {},
+                  }
+                  os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                  with open(out_path, "w", encoding="utf-8") as handle:
+                      json.dump(stub, handle)
+
               def fetch_once():
                   with urllib.request.urlopen(url, timeout=10) as resp:
                       if resp.status != 200:
@@ -1616,6 +1631,8 @@ spec:
                       json.dump(data, handle)
                   os.replace(tmp_path, out_path)
 
+              write_stub()
+
               while True:
                   try:
                       fetch_once()
@@ -1623,6 +1640,7 @@ spec:
                       time.sleep(refresh_seconds)
                   except Exception as exc:
                       print(f"OpenAPI fetch failed: {exc}")
+                      write_stub()
                       time.sleep(retry_seconds)
           env:
             - name: OPENAPI_SOURCE_URL
