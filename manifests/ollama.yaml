@@ -1242,6 +1242,7 @@ metadata:
   name: open-webui
   namespace: ollama
   annotations:
+    argocd.argoproj.io/sync-wave: "3"
     # Gravitee discovery
     gravitee.io/expose: "true"
     gravitee.io/context-path: "/open-webui"
@@ -1450,7 +1451,7 @@ metadata:
   name: open-webui-openapi
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app: open-webui-openapi
 spec:
@@ -1644,7 +1645,7 @@ metadata:
   name: open-webui-openapi
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app: open-webui-openapi
 spec:
@@ -1741,7 +1742,7 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-wave: "6"
     linkerd.io/inject: "disabled"
 spec:
   backoffLimit: 0
