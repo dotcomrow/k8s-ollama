@@ -118,15 +118,20 @@ spec:
               VAULTADMIN_USER=vaultadmin
 
               echo "🔧 Installing clients..."
-              apk add --no-cache bash curl postgresql15-client jq >/dev/null
+              apk add --no-cache bash curl postgresql15-client jq netcat-openbsd >/dev/null
 
               export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
 
               echo "🔑 Waiting for Vault token..."
-              while [ ! -f /vault-token/VAULT_TOKEN ]; do
+              while [ ! -f /vault-token/VAULT_TOKEN ] && [ ! -f /vault-token/token ]; do
                 sleep 2
               done
-              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              if [ -f /vault-token/VAULT_TOKEN ]; then
+                export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+              else
+                export VAULT_TOKEN="$(cat /vault-token/token)"
+              fi
 
               echo "🔎 Wait for DB endpoint..."
               until getent hosts "$PGHOST" >/dev/null; do sleep 3; done
@@ -158,7 +163,7 @@ spec:
                 sleep 3
               done
 
-              # Create stable owner login if missing
+              # Create stable owner login if missing; allow vaultadmin to set OWNER to it
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
@@ -167,18 +172,6 @@ spec:
                 END IF;
               END
               \$\$;
-              EOSQL
-
-              # Create stable owner login if missing
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO \$\$
-              BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_LOGIN') THEN
-                  CREATE ROLE $OWNER_LOGIN LOGIN;
-                END IF;
-              END
-              \$\$;
-              -- allow vaultadmin to set OWNER to $OWNER_LOGIN
               GRANT $OWNER_LOGIN TO $VAULTADMIN_USER;
               EOSQL
 
@@ -266,6 +259,10 @@ kind: Job
 metadata:
   name: copy-ollama-vault-root-token
   namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-10"
 spec:
   backoffLimit: 1
   template:
@@ -287,39 +284,16 @@ spec:
                 kubectl apply -f -
               echo "✅ Secret copied."
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: job-creator
-  namespace: ollama
-rules:
-  - apiGroups: ["batch"]
-    resources: ["cronjobs", "jobs"]
-    verbs: ["get", "create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: job-creator-binding
-  namespace: ollama
-subjects:
-  - kind: ServiceAccount
-    name: default
-    namespace: ollama
-roleRef:
-  kind: Role
-  name: job-creator
-  apiGroup: rbac.authorization.k8s.io
----
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: start-database-url-rotation-job
+  name: openwebui-initial-secrets-sync
   namespace: ollama
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-wave: "1"
+    linkerd.io/inject: disabled
 spec:
   backoffLimit: 1
   template:
@@ -329,9 +303,6 @@ spec:
     spec:
       serviceAccountName: openwebui
       restartPolicy: Never
-      volumes:
-        - name: kubectl-bin
-          emptyDir: {}
       initContainers:
         - name: load-kubectl
           image: alpine/k8s:1.31.4
@@ -341,51 +312,133 @@ spec:
             - name: kubectl-bin
               mountPath: /kubectl-bin
       containers:
-        - name: start-job
-          image: alpine/k8s:1.31.4
+        - name: vault-sync-once
+          image: ubuntu:22.04
+          command: ["/bin/bash","-c"]
+          args:
+            - |
+              RETRY_INTERVAL=5
+
+              echo "🔧 Installing tools..."
+              while true; do
+                apt-get update && apt-get install -y curl unzip jq postgresql-client && break
+                echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."; sleep "$RETRY_INTERVAL"
+              done
+
+              echo "📌 Installing Vault CLI..."
+              while true; do
+                curl -fsSL -o vault.zip https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip && break
+                echo "⚠️ Vault download failed. Retrying..."; sleep "$RETRY_INTERVAL"
+              done
+              unzip -o vault.zip >/dev/null && mv vault /usr/local/bin/ && chmod +x /usr/local/bin/vault
+
+              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+
+              if [ -f /vault-token/VAULT_TOKEN ]; then
+                VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+              elif [ -f /vault-token/token ]; then
+                VAULT_TOKEN="$(cat /vault-token/token)"
+              else
+                echo "❌ No Vault token file found in /vault-token"
+                ls -la /vault-token || true
+                exit 1
+              fi
+              export VAULT_TOKEN
+
+              echo "⏳ Waiting for Vault static creds yugabyte-db/static-creds/openwebui-login ..."
+              while true; do
+                CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
+                if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
+                  USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
+                  PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
+                  echo "✅ Got static creds for user: $USERNAME"
+                  break
+                fi
+                echo "⚠️ Static creds not available yet. Retrying..."
+                cat /tmp/vault_err.log || true
+                sleep "$RETRY_INTERVAL"
+              done
+
+              USERNAME_ENC=$(printf '%s' "$USERNAME" | jq -sRr @uri)
+              PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
+              DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
+
+              echo "🔐 Creating/updating Kubernetes secret openwebui-db-url..."
+              cat <<EOF | kubectl apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: openwebui-db-url
+                namespace: ollama
+              type: Opaque
+              stringData:
+                DATABASE_URL: ${DB_URL}
+              EOF
+              echo "✅ DATABASE_URL created/updated."
+
+              echo "⏳ Waiting for Keycloak client secrets in Vault..."
+              while true; do
+                OIDC_CLIENT_ID=$(vault kv get -field=value secret/keycloak-client-id-openwebui 2>/tmp/vault_err.log || true)
+                OIDC_CLIENT_SECRET=$(vault kv get -field=value secret/keycloak-client-secret-openwebui 2>/tmp/vault_err.log || true)
+                if [ -n "$OIDC_CLIENT_ID" ] && [ -n "$OIDC_CLIENT_SECRET" ]; then
+                  echo "✅ Got Keycloak client credentials"
+                  break
+                fi
+                echo "⚠️ Keycloak client credentials not available yet. Retrying..."
+                cat /tmp/vault_err.log || true
+                sleep "$RETRY_INTERVAL"
+              done
+
+              echo "🔐 Creating/updating Kubernetes secret openwebui-oidc-secrets..."
+              cat <<EOF | kubectl apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: openwebui-oidc-secrets
+                namespace: ollama
+              type: Opaque
+              stringData:
+                OAUTH_CLIENT_ID: ${OIDC_CLIENT_ID}
+                OAUTH_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+              EOF
+              echo "✅ OIDC secrets created/updated."
+
+              echo "⏳ Waiting for OpenAI API key in Vault..."
+              while true; do
+                OPENAI_API_KEY=$(vault kv get -field=value secret/open_ai_key 2>/tmp/vault_err.log || true)
+                if [ -n "$OPENAI_API_KEY" ]; then
+                  echo "✅ Got OpenAI API key"
+                  break
+                fi
+                echo "⚠️ OpenAI API key not available yet. Retrying..."
+                cat /tmp/vault_err.log || true
+                sleep "$RETRY_INTERVAL"
+              done
+
+              echo "🔐 Creating/updating Kubernetes secret openwebui-openai..."
+              cat <<EOF | kubectl apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: openwebui-openai
+                namespace: ollama
+              type: Opaque
+              stringData:
+                OPENAI_API_KEY: ${OPENAI_API_KEY}
+              EOF
+              echo "✅ OpenAI secret created/updated."
           volumeMounts:
             - name: kubectl-bin
               mountPath: /usr/local/bin
-          command: ["/bin/sh","-c"]
-          args:
-            - |
-              set -eu
-
-              wait_for_secret_key() {
-                secret_name="$1"
-                key_name="$2"
-                i=0
-                while [ "$i" -lt 60 ]; do
-                  value="$(kubectl -n ollama get secret "$secret_name" -o jsonpath="{.data.${key_name}}" 2>/dev/null || true)"
-                  if [ -n "$value" ]; then
-                    echo "✅ ${secret_name}/${key_name} ready"
-                    return 0
-                  fi
-                  i=$((i + 1))
-                  echo "⏳ Waiting for ${secret_name}/${key_name}..."
-                  sleep 5
-                done
-                echo "❌ Timed out waiting for ${secret_name}/${key_name}"
-                return 1
-              }
-
-              JOB_NAME="sync-openwebui-db-secret-now"
-              echo "🔁 Triggering ${JOB_NAME} from CronJob..."
-              kubectl delete job "$JOB_NAME" -n ollama --ignore-not-found=true
-              until kubectl create job --from=cronjob/sync-openwebui-db-secret "$JOB_NAME" -n ollama; do
-                echo "⏳ Waiting for CronJob..."
-                sleep 3
-              done
-
-              echo "⏳ Waiting for ${JOB_NAME} to complete..."
-              kubectl wait --for=condition=complete "job/${JOB_NAME}" -n ollama --timeout=600s
-
-              wait_for_secret_key openwebui-db-url DATABASE_URL
-              wait_for_secret_key openwebui-oidc-secrets OAUTH_CLIENT_ID
-              wait_for_secret_key openwebui-oidc-secrets OAUTH_CLIENT_SECRET
-              wait_for_secret_key openwebui-openai OPENAI_API_KEY
-
-              echo "✅ OpenWebUI secrets ready"
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
+      volumes:
+        - name: kubectl-bin
+          emptyDir: {}
+        - name: root-token
+          secret:
+            secretName: vault-root-token
 ---
 # OLLAMA (unchanged functionally)
 apiVersion: apps/v1
@@ -755,7 +808,16 @@ spec:
                   unzip -o vault.zip >/dev/null && mv vault /usr/local/bin/ && chmod +x /usr/local/bin/vault
 
                   export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-                  VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+                  if [ -f /vault-token/VAULT_TOKEN ]; then
+                    VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+                  elif [ -f /vault-token/token ]; then
+                    VAULT_TOKEN="$(cat /vault-token/token)"
+                  else
+                    echo "❌ No Vault token file found in /vault-token"
+                    ls -la /vault-token || true
+                    exit 1
+                  fi
                   export VAULT_TOKEN
 
                   while true; do
@@ -767,7 +829,7 @@ spec:
                       break
                     fi
                     echo "⚠️ Static creds not available yet. Retrying..."
-                    cat /tmp/vault_err.log
+                    cat /tmp/vault_err.log || true
                     sleep "$RETRY_INTERVAL"
                   done
 
@@ -775,7 +837,7 @@ spec:
                   PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
                   DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
 
-                  echo "🔐 Creating/updating Kubernetes secret..."
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-db-url..."
                   cat <<EOF | kubectl apply -f -
                   apiVersion: v1
                   kind: Secret
@@ -797,11 +859,11 @@ spec:
                       break
                     fi
                     echo "⚠️ Keycloak client credentials not available yet. Retrying..."
-                    cat /tmp/vault_err.log
+                    cat /tmp/vault_err.log || true
                     sleep "$RETRY_INTERVAL"
                   done
 
-                  echo "🔐 Creating/updating Kubernetes secret for OIDC..."
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-oidc-secrets..."
                   cat <<EOF | kubectl apply -f -
                   apiVersion: v1
                   kind: Secret
@@ -823,11 +885,11 @@ spec:
                       break
                     fi
                     echo "⚠️ OpenAI API key not available yet. Retrying..."
-                    cat /tmp/vault_err.log
+                    cat /tmp/vault_err.log || true
                     sleep "$RETRY_INTERVAL"
                   done
 
-                  echo "🔐 Creating/updating Kubernetes secret for OpenAI..."
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-openai..."
                   cat <<EOF | kubectl apply -f -
                   apiVersion: v1
                   kind: Secret
@@ -888,7 +950,7 @@ spec:
               command: ["sh","-c"]
               args:
                 - |
-                  set -euo pipefail
+                  set -eu
 
                   KEEP_ALIVE_DEFAULT="-1"
                   DEFAULT_MODEL_ID=""
@@ -1357,6 +1419,8 @@ kind: Deployment
 metadata:
   name: open-webui-openapi
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
   labels:
     app: open-webui-openapi
 spec:
@@ -1538,6 +1602,8 @@ kind: Service
 metadata:
   name: open-webui-openapi
   namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
   labels:
     app: open-webui-openapi
 spec:
