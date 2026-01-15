@@ -1434,8 +1434,8 @@ spec:
         app: open-webui-openapi
     spec:
       restartPolicy: Always
-      initContainers:
-        - name: fetch-openapi
+      containers:
+        - name: openapi-fetcher
           image: python:3.11-slim
           command: ["python", "-c"]
           args:
@@ -1451,6 +1451,9 @@ spec:
                   "http://open-webui.ollama.svc.cluster.local:80/openapi.json",
               )
               out_path = "/openapi/openapi.json"
+
+              retry_seconds = int(os.environ.get("OPENAPI_RETRY_SECONDS", "5"))
+              refresh_seconds = int(os.environ.get("OPENAPI_REFRESH_SECONDS", "300"))
 
               def normalize(obj):
                   if isinstance(obj, dict):
@@ -1560,31 +1563,39 @@ spec:
                           else:
                               seen[op_id] = (path, method)
 
-              for attempt in range(1, 31):
+              def fetch_once():
+                  with urllib.request.urlopen(url, timeout=10) as resp:
+                      if resp.status != 200:
+                          raise RuntimeError(f"unexpected status {resp.status}")
+                      data = json.load(resp)
+                  data["openapi"] = "3.0.3"
+                  normalize(data)
+                  ensure_path_params(data)
+                  dedupe_operation_ids(data)
+                  os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                  tmp_path = f"{out_path}.tmp"
+                  with open(tmp_path, "w", encoding="utf-8") as handle:
+                      json.dump(data, handle)
+                  os.replace(tmp_path, out_path)
+
+              while True:
                   try:
-                      with urllib.request.urlopen(url, timeout=10) as resp:
-                          if resp.status != 200:
-                              raise RuntimeError(f"unexpected status {resp.status}")
-                          data = json.load(resp)
-                      data["openapi"] = "3.0.3"
-                      normalize(data)
-                      ensure_path_params(data)
-                      dedupe_operation_ids(data)
-                      with open(out_path, "w", encoding="utf-8") as handle:
-                          json.dump(data, handle)
-                      break
+                      fetch_once()
+                      print("OpenAPI fetched successfully")
+                      time.sleep(refresh_seconds)
                   except Exception as exc:
-                      if attempt == 30:
-                          raise
-                      print(f"OpenAPI fetch failed ({attempt}/30): {exc}")
-                      time.sleep(5)
+                      print(f"OpenAPI fetch failed: {exc}")
+                      time.sleep(retry_seconds)
           env:
             - name: OPENAPI_SOURCE_URL
               value: "http://open-webui.ollama.svc.cluster.local:80/openapi.json"
+            - name: OPENAPI_RETRY_SECONDS
+              value: "5"
+            - name: OPENAPI_REFRESH_SECONDS
+              value: "300"
           volumeMounts:
             - name: openapi
               mountPath: /openapi
-      containers:
         - name: openapi-server
           image: python:3.11-slim
           command: ["python", "-m", "http.server", "8080", "--directory", "/openapi"]
