@@ -997,6 +997,30 @@ spec:
                     return 1
                   }
 
+                  wait_for_secret_value() {
+                    secret_name="$1"
+                    key_name="$2"
+                    namespace="${POD_NAMESPACE:-ollama}"
+                    api="https://kubernetes.default.svc"
+                    token_path="/var/run/secrets/kubernetes.io/serviceaccount/token"
+                    ca_path="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+                    while true; do
+                      token="$(cat "$token_path")"
+                      secret_json="$(curl -fsS --cacert "$ca_path" -H "Authorization: Bearer $token" \
+                        "$api/api/v1/namespaces/${namespace}/secrets/${secret_name}" 2>/tmp/secret_err.log || true)"
+                      if [ -n "$secret_json" ]; then
+                        value_b64="$(echo "$secret_json" | jq -r --arg key "$key_name" '.data[$key] // empty')"
+                        if [ -n "$value_b64" ]; then
+                          printf '%s' "$value_b64" | base64 -d
+                          return 0
+                        fi
+                      fi
+                      echo "⏳ Waiting for ${secret_name}/${key_name}..." >&2
+                      sleep 5
+                    done
+                  }
+
                   DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.env DEFAULT_MODELS || true)"
                   if [ -z "$DEFAULT_MODEL_ID" ]; then
                     DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.properties DEFAULT_MODELS || true)"
@@ -1004,12 +1028,13 @@ spec:
                   DEFAULT_MODEL_ID="$(trim "$DEFAULT_MODEL_ID")"
                   DEFAULT_MODEL_ID="${DEFAULT_MODEL_ID%%,*}"
 
-                  if [ -z "${DATABASE_URL:-}" ]; then
-                    echo "DATABASE_URL is missing"
-                    exit 1
-                  fi
-
                   apk add --no-cache curl jq >/dev/null
+
+                  if [ -z "${DATABASE_URL:-}" ]; then
+                    echo "DATABASE_URL missing; waiting for openwebui-db-url..." >&2
+                    DATABASE_URL="$(wait_for_secret_value openwebui-db-url DATABASE_URL)"
+                    export DATABASE_URL
+                  fi
 
                   ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='administrator@suncoast.systems' limit 1" | tr -d '[:space:]')"
                   if [ -z "$ADMIN_ID" ]; then
@@ -1044,11 +1069,16 @@ spec:
                     fi
                   done
               env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
                 - name: DATABASE_URL
                   valueFrom:
                     secretKeyRef:
                       name: openwebui-db-url
                       key: DATABASE_URL
+                      optional: true
                 - name: OLLAMA_TAGS_URL
                   value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama/api/tags"
               volumeMounts:
