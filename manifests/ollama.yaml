@@ -1223,59 +1223,79 @@ data:
       server {
         listen 8080;
         server_name _;
+
+        # Profile image endpoint (regex) - MUST NOT use URI part in proxy_pass.
+        # Rewrite to include the /open-webui prefix, then proxy_pass without URI.
         location ~* ^/users/[^/]+/profile/image$ {
+          rewrite ^ /open-webui$uri break;
+
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
+
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;
-          # Avoid websocket compression mismatch through the gateway.
           proxy_set_header Sec-WebSocket-Extensions "";
+
           proxy_buffering off;
           proxy_request_buffering off;
           proxy_read_timeout 3600;
           proxy_send_timeout 3600;
+
           add_header Cache-Control "no-store, max-age=0" always;
-          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/;
+
+          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082;
         }
+
+        # SSE endpoint - keep as non-regex location and proxy_pass with full path is OK here.
         location ^~ /api/chat/completions {
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
+
           proxy_set_header Connection "";
           proxy_set_header Accept-Encoding "";
           proxy_set_header Accept "text/event-stream";
+
           proxy_buffering off;
           proxy_cache off;
           proxy_request_buffering off;
           proxy_read_timeout 3600;
           proxy_send_timeout 3600;
+
           chunked_transfer_encoding on;
           proxy_hide_header Content-Type;
           add_header Content-Type "text/event-stream; charset=utf-8" always;
           add_header Cache-Control "no-cache";
           add_header X-Accel-Buffering "no";
+
           proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/api/chat/completions;
         }
+
+        # Everything else -> open-webui through gateway
         location / {
+          rewrite ^ /open-webui$uri break;
+
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
+
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;
-          # Avoid websocket compression mismatch through the gateway.
           proxy_set_header Sec-WebSocket-Extensions "";
+
           proxy_buffering off;
           proxy_request_buffering off;
           proxy_read_timeout 3600;
           proxy_send_timeout 3600;
-          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/;
+
+          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082;
         }
       }
     }
