@@ -961,6 +961,27 @@ spec:
                 exit 1
               fi
 
+              MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-600}"
+              WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
+
+              echo "Waiting for openwebui.model to exist..."
+              elapsed=0
+              while true; do
+                table_ready="$(psql "$DATABASE_URL" -tA -c "select 1 from information_schema.tables where table_schema='openwebui' and table_name='model' limit 1" 2>/tmp/psql_err.log || true)"
+                if [ "$table_ready" = "1" ]; then
+                  break
+                fi
+                if [ "$elapsed" -ge "$MAX_WAIT_SECONDS" ]; then
+                  echo "Timed out waiting for openwebui.model"
+                  cat /tmp/psql_err.log || true
+                  exit 1
+                fi
+                echo "openwebui.model not ready yet; retrying..."
+                cat /tmp/psql_err.log || true
+                sleep "$WAIT_INTERVAL"
+                elapsed=$((elapsed + WAIT_INTERVAL))
+              done
+
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
               CREATE OR REPLACE FUNCTION openwebui.normalize_model_meta()
               RETURNS trigger AS $$
