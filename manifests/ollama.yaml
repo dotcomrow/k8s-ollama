@@ -984,16 +984,16 @@ spec:
 
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
               CREATE OR REPLACE FUNCTION openwebui.normalize_model_meta()
-              RETURNS trigger AS $$
+              RETURNS trigger AS '
               BEGIN
-                IF NEW.meta IS NULL OR NEW.meta = '' OR
-                   jsonb_typeof(NULLIF(NEW.meta, '')::jsonb->'capabilities') IS DISTINCT FROM 'object' THEN
-                  NEW.meta := (COALESCE(NULLIF(NEW.meta, '')::jsonb, '{}'::jsonb) - 'capabilities'
-                               || '{"capabilities": {}}'::jsonb)::text;
+                IF NEW.meta IS NULL OR NEW.meta = '''' OR
+                   jsonb_typeof(NULLIF(NEW.meta, '''')::jsonb->''capabilities'') IS DISTINCT FROM ''object'' THEN
+                  NEW.meta := (COALESCE(NULLIF(NEW.meta, '''')::jsonb, ''{}''::jsonb) - ''capabilities''
+                               || ''{"capabilities": {}}''::jsonb)::text;
                 END IF;
                 RETURN NEW;
               END;
-              $$ LANGUAGE plpgsql;
+              ' LANGUAGE plpgsql;
 
               DROP TRIGGER IF EXISTS normalize_openwebui_model_meta ON openwebui.model;
               CREATE TRIGGER normalize_openwebui_model_meta
