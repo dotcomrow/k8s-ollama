@@ -1383,7 +1383,7 @@ metadata:
     # Definition list fields (comma-separated)
     gravitee.io/definition-groups: "ai,ui"
     gravitee.io/definition-tags: "open-webui,llm,ai"
-    gravitee.io/definition-labels: "internal,ui"
+    gravitee.io/definition-labels: "internal,ui,hasura"
     gravitee.io/definition-categories: "ai,ui"
     gravitee.io/definition-path-mappings: "/open-webui/*"
 
