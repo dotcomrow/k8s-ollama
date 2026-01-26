@@ -1360,6 +1360,7 @@ metadata:
     gravitee.io/context-path: "/open-webui"
     gravitee.io/auth-required: "openwebui-token"
     gravitee.io/approval-required: "admin"
+    gravitee.io/token-exchange-target: "<path:secret/data/keycloak-client-id-openwebui#value>"
 
     # Definition metadata (string)
     gravitee.io/description: "Open WebUI HTTP API"
