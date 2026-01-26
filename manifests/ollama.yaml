@@ -1021,19 +1021,23 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded,HookFailed
     argocd.argoproj.io/sync-options: Replace=true,Force=true
     argocd.argoproj.io/sync-wave: "4"
     linkerd.io/inject: enabled
 spec:
   backoffLimit: 1
+  ttlSecondsAfterFinished: 300
   template:
     metadata:
       annotations:
+        config.linkerd.io/proxy-env: "LINKERD2_PROXY_SHUTDOWN_ENDPOINT_ENABLED=true"
+        config.linkerd.io/proxy-shutdown-endpoint-enabled: "true"
         linkerd.io/inject: enabled
       labels:
         app: openwebui-model-sync
     spec:
+      shareProcessNamespace: true
       serviceAccountName: openwebui
       restartPolicy: OnFailure
       containers:
@@ -1050,6 +1054,42 @@ spec:
           args:
             - |
               set -eu
+
+              cleanup_proxy() {
+                admin_url="http://127.0.0.1:4191"
+                linkerd_pid=""
+                for comm in /proc/[0-9]*/comm; do
+                  name="$(cat "$comm" 2>/dev/null || true)"
+                  case "$name" in
+                    linkerd-proxy|linkerd2-proxy)
+                      linkerd_pid="${comm#/proc/}"
+                      linkerd_pid="${linkerd_pid%/comm}"
+                      break
+                      ;;
+                  esac
+                done
+                if command -v curl >/dev/null 2>&1; then
+                  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X POST "${admin_url}/shutdown" || true)"
+                  if [ -n "${code:-}" ] && [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "000" ]; then
+                    echo "WARN: linkerd shutdown returned HTTP ${code}"
+                  fi
+                else
+                  code=""
+                fi
+                if [ -n "${linkerd_pid}" ]; then
+                  if [ "${code:-}" = "404" ] || [ -z "${code:-}" ]; then
+                    kill -TERM "${linkerd_pid}" >/dev/null 2>&1 || true
+                  fi
+                  for _ in $(seq 1 20); do
+                    if [ ! -e "/proc/${linkerd_pid}" ]; then
+                      return 0
+                    fi
+                    sleep 1
+                  done
+                  echo "WARN: linkerd-proxy still running after shutdown"
+                fi
+              }
+              trap cleanup_proxy EXIT
 
               KEEP_ALIVE_DEFAULT="-1"
               DEFAULT_MODEL_ID=""
