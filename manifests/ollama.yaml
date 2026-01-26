@@ -1024,13 +1024,13 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-options: Replace=true,Force=true
     argocd.argoproj.io/sync-wave: "4"
-    linkerd.io/inject: disabled
+    linkerd.io/inject: enabled
 spec:
   backoffLimit: 1
   template:
     metadata:
       annotations:
-        linkerd.io/inject: disabled
+        linkerd.io/inject: enabled
       labels:
         app: openwebui-model-sync
     spec:
