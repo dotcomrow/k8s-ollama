@@ -1192,7 +1192,7 @@ spec:
                   key: DATABASE_URL
                   optional: true
             - name: OLLAMA_TAGS_URL
-              value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama/api/tags"
+              value: "http://ollama.ollama.svc.cluster.local:11434/api/tags"
           volumeMounts:
             - name: openwebui-config
               mountPath: /config
