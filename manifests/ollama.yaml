@@ -96,8 +96,6 @@ spec:
     metadata:
       annotations:
         linkerd.io/inject: disabled
-      labels:
-        app: openwebui-model-sync
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -271,8 +269,6 @@ spec:
     metadata:
       annotations:
         linkerd.io/inject: disabled
-      labels:
-        app: openwebui-model-sync
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -1035,6 +1031,8 @@ spec:
     metadata:
       annotations:
         linkerd.io/inject: disabled
+      labels:
+        app: openwebui-model-sync
     spec:
       serviceAccountName: openwebui
       restartPolicy: OnFailure
