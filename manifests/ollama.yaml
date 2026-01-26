@@ -96,6 +96,8 @@ spec:
     metadata:
       annotations:
         linkerd.io/inject: disabled
+      labels:
+        app: openwebui-model-sync
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -1022,6 +1024,7 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
     argocd.argoproj.io/sync-wave: "4"
     linkerd.io/inject: disabled
 spec:
@@ -1807,6 +1810,9 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - podSelector:
+            matchLabels:
+              app: openwebui-model-sync
       ports:
         - protocol: TCP
           port: 11434
