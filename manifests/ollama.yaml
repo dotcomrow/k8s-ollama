@@ -1358,9 +1358,13 @@ spec:
             - name: ENV
               value: "dev"
             - name: OLLAMA_BASE_URL
-              value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/ollama"
+              value: "http://ollama.ollama.svc.cluster.local:11434"
             - name: OLLAMA_API_TIMEOUT
               value: "300"
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: WEBUI_LOG_LEVEL
+              value: "debug"
             # Enable the MCP client UI in recent builds
             - name: ENABLE_MCP_CLIENT
               value: "true"
@@ -1465,6 +1469,10 @@ data:
   nginx.conf: |
     events {}
     http {
+      log_format main '$remote_addr - $remote_user [$time_local] "$request" $status '
+                      '$body_bytes_sent "$http_referer" "$http_user_agent" '
+                      'upstream:$upstream_status host:$host uri:$request_uri';
+      access_log /dev/stdout main;
       map $http_upgrade $connection_upgrade {
         default upgrade;
         '' keep-alive;
