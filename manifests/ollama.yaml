@@ -1552,6 +1552,12 @@ data:
       }
     }
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-webui-teleport-proxy
+  namespace: ollama
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1572,6 +1578,7 @@ spec:
       labels:
         app: open-webui-teleport-proxy
     spec:
+      serviceAccountName: open-webui-teleport-proxy
       containers:
         - name: nginx
           image: nginx:1.25-alpine
@@ -2079,6 +2086,21 @@ spec:
           namespace: ollama
         - name: open-webui-openapi
           namespace: ollama
+        - name: open-webui-teleport-proxy
+          namespace: ollama
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: open-webui-from-ollama-namespace
+  namespace: ollama
+spec:
+  server:
+    name: open-webui
+  client:
+    meshTLS:
+      identities:
+        - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
 ---
 apiVersion: policy.linkerd.io/v1beta1
 kind: Server
@@ -2107,3 +2129,16 @@ spec:
           namespace: k8s-api-gateway
         - name: openwebui
           namespace: ollama
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: ollama-from-ollama-namespace
+  namespace: ollama
+spec:
+  server:
+    name: ollama
+  client:
+    meshTLS:
+      identities:
+        - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
