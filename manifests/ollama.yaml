@@ -1551,6 +1551,9 @@ metadata:
   namespace: ollama
   labels:
     app: open-webui-teleport-proxy
+  annotations:
+    reloader.stakater.com/auto: "true"
+    reloader.stakater.com/configmap: "open-webui-teleport-proxy"
 spec:
   replicas: 1
   selector:
@@ -1595,6 +1598,82 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ollama-from-gravitee
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+          podSelector:
+            matchLabels:
+              app: gravitee-gateway
+      ports:
+        - protocol: TCP
+          port: 11434
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-open-webui-from-gravitee-and-teleport
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+          podSelector:
+            matchLabels:
+              app: gravitee-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app: open-webui-teleport-proxy
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-open-webui-openapi-from-gravitee
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui-openapi
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: k8s-api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1839,6 +1918,7 @@ spec:
     - Ingress
   ingress:
     - from:
+        - podSelector: {}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: k8s-api-gateway
@@ -1867,6 +1947,7 @@ spec:
     - Ingress
   ingress:
     - from:
+        - podSelector: {}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: k8s-api-gateway
@@ -1876,6 +1957,9 @@ spec:
         - podSelector:
             matchLabels:
               app: open-webui-openapi
+        - podSelector:
+            matchLabels:
+              app: open-webui-teleport-proxy
       ports:
         - protocol: TCP
           port: 8080
@@ -1895,6 +1979,7 @@ spec:
     - Ingress
   ingress:
     - from:
+        - podSelector: {}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: k8s-api-gateway
