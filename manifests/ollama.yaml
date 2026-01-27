@@ -1473,11 +1473,8 @@ data:
         listen 8080;
         server_name _;
 
-        # Profile image endpoint (regex) - MUST NOT use URI part in proxy_pass.
-        # Rewrite to include the /open-webui prefix, then proxy_pass without URI.
+        # Profile image endpoint (regex) - proxy directly to OpenWebUI.
         location ~* ^/users/[^/]+/profile/image$ {
-          rewrite ^ /open-webui$uri break;
-
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1495,10 +1492,10 @@ data:
 
           add_header Cache-Control "no-store, max-age=0" always;
 
-          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082;
+          proxy_pass http://open-webui.ollama.svc.cluster.local:80;
         }
 
-        # SSE endpoint - keep as non-regex location and proxy_pass with full path is OK here.
+        # SSE endpoint - proxy directly to OpenWebUI.
         location ^~ /api/chat/completions {
           proxy_http_version 1.1;
           proxy_set_header Host $host;
@@ -1522,13 +1519,11 @@ data:
           add_header Cache-Control "no-cache";
           add_header X-Accel-Buffering "no";
 
-          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/open-webui/api/chat/completions;
+          proxy_pass http://open-webui.ollama.svc.cluster.local:80;
         }
 
-        # Everything else -> open-webui through gateway
+        # Everything else -> OpenWebUI directly
         location / {
-          rewrite ^ /open-webui$uri break;
-
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1544,7 +1539,7 @@ data:
           proxy_read_timeout 3600;
           proxy_send_timeout 3600;
 
-          proxy_pass http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082;
+          proxy_pass http://open-webui.ollama.svc.cluster.local:80;
         }
       }
     }
