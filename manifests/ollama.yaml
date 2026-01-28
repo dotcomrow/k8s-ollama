@@ -303,6 +303,7 @@ spec:
       port: 8080
       targetPort: 8080
   type: ClusterIP
+---
 # ONE-TIME DB + VAULT SETUP (owner + static role)
 apiVersion: batch/v1
 kind: Job
