@@ -169,11 +169,11 @@ data:
                     cur.execute("SELECT id FROM \"user\" WHERE id = %s", (sub,))
                     if cur.fetchone() is None:
                         cur.execute(
-                            \"\"\"INSERT INTO \"user\" (
+                            """INSERT INTO "user" (
                                 id, email, username, role, name, profile_image_url,
                                 oauth, last_active_at, created_at, updated_at
                               ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                              ON CONFLICT (id) DO NOTHING\"\"\",
+                              ON CONFLICT (id) DO NOTHING""",
                             (
                                 sub,
                                 email,
