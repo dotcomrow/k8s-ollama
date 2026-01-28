@@ -95,6 +95,7 @@ data:
     cryptography==43.0.1
     psycopg2-binary==2.9.9
     bcrypt==4.2.0
+    python-multipart==0.0.9
   app.py: |
     import os
     import time
