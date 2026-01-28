@@ -253,6 +253,9 @@ spec:
     metadata:
       labels:
         app: openwebui-auth-bridge
+      annotations:
+        reloader.stakater.com/configmap: "openwebui-auth-bridge"
+        reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
     spec:
       containers:
         - name: openwebui-auth-bridge
