@@ -684,6 +684,7 @@ spec:
     metadata:
       labels:
         app: ollama
+        platform.suncoast.systems/vpa-exclude: "true"
     spec:
       nodeSelector:
         dedicated: work-node-gpu
