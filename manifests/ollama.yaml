@@ -672,6 +672,7 @@ metadata:
   namespace: ollama
   labels:
     app: ollama
+    platform.suncoast.systems/vpa-exclude: "true"
 spec:
   strategy:
     type: Recreate
