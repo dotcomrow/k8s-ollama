@@ -1,0 +1,58 @@
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: enforce-open-webui-min-resources
+  namespace: ollama
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: min-resources-on-deployment
+      match:
+        resources:
+          kinds:
+            - Deployment
+          names:
+            - open-webui
+      validate:
+        message: "open-webui must request at least 250m CPU and 1Gi memory, and limit at least 1 CPU and 2Gi memory."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.template.spec.containers[?name=='open-webui'].resources.requests.cpu | [0] || '0' }}"
+                operator: LessThan
+                value: "250m"
+              - key: "{{ request.object.spec.template.spec.containers[?name=='open-webui'].resources.requests.memory | [0] || '0Mi' }}"
+                operator: LessThan
+                value: "1Gi"
+              - key: "{{ request.object.spec.template.spec.containers[?name=='open-webui'].resources.limits.cpu | [0] || '0' }}"
+                operator: LessThan
+                value: "1"
+              - key: "{{ request.object.spec.template.spec.containers[?name=='open-webui'].resources.limits.memory | [0] || '0Mi' }}"
+                operator: LessThan
+                value: "2Gi"
+    - name: min-resources-on-pod-resize
+      match:
+        resources:
+          kinds:
+            - Pod
+          selector:
+            matchLabels:
+              app: open-webui
+      validate:
+        message: "open-webui must request at least 250m CPU and 1Gi memory, and limit at least 1 CPU and 2Gi memory."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.containers[?name=='open-webui'].resources.requests.cpu | [0] || '0' }}"
+                operator: LessThan
+                value: "250m"
+              - key: "{{ request.object.spec.containers[?name=='open-webui'].resources.requests.memory | [0] || '0Mi' }}"
+                operator: LessThan
+                value: "1Gi"
+              - key: "{{ request.object.spec.containers[?name=='open-webui'].resources.limits.cpu | [0] || '0' }}"
+                operator: LessThan
+                value: "1"
+              - key: "{{ request.object.spec.containers[?name=='open-webui'].resources.limits.memory | [0] || '0Mi' }}"
+                operator: LessThan
+                value: "2Gi"
