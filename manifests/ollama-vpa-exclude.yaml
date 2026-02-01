@@ -1,0 +1,22 @@
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: deny-vpa-ollama
+  namespace: ollama
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: deny-vpa-targeting-ollama
+      match:
+        resources:
+          kinds:
+            - VerticalPodAutoscaler
+      validate:
+        message: "VPA is disabled for ollama (GPU workload)."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.targetRef.name || '' }}"
+                operator: Equals
+                value: "ollama"
