@@ -335,6 +335,7 @@ spec:
               # No 'set -euo pipefail' per preference
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
+              MAINT_DB=yugabyte
               DB=openwebui
               OWNER_LOGIN=openwebui_login
               VAULTADMIN_USER=vaultadmin
@@ -368,25 +369,28 @@ spec:
                 sleep 3
               done
               export PGPASSWORD="$VAULTADMIN_PASS"
+              export PGDATABASE="$MAINT_DB"
 
               # Ensure database exists (owned by vaultadmin for now)
               while :; do
-                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)
+                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$MAINT_DB" -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/tmp/psql_err.log || true)
                 if [ "$DB_EXISTS" = "1" ]; then
                   echo "✅ Database $DB exists"
                   break
                 fi
                 echo "📦 Creating database $DB..."
-                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
+                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/tmp/createdb_err.log; then
                   echo "✅ Created $DB"
                   break
                 fi
+                echo "❌ Create DB failed (see /tmp/createdb_err.log):"
+                cat /tmp/createdb_err.log
                 echo "⏳ Retry create DB..."
                 sleep 3
               done
 
               # Create stable owner login if missing; allow vaultadmin to set OWNER to it
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$MAINT_DB" <<EOSQL
               DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_LOGIN') THEN
