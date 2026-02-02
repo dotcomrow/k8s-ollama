@@ -102,6 +102,7 @@ data:
     import time
     import uuid
     import json
+    import hashlib
     import bcrypt
     import jwt
     import psycopg2
@@ -119,6 +120,7 @@ data:
     JWT_EXPIRES_IN = os.environ.get("WEBUI_JWT_EXPIRES_IN", "4w")
     JWKS_CACHE_SECONDS = int(os.environ.get("JWKS_CACHE_SECONDS", "300"))
     JWKS_TIMEOUT_SECONDS = int(os.environ.get("JWKS_TIMEOUT_SECONDS", "5"))
+    USERNAME_MAX_LEN = int(os.environ.get("WEBUI_USERNAME_MAX", "50"))
 
     _jwks_cache = {"data": None, "loaded_at": 0.0}
     _jwks_lock = threading.Lock()
@@ -136,6 +138,18 @@ data:
             return num * mult
         except Exception:
             return 4 * 604800
+
+    def normalize_username(value: str, fallback: str) -> str:
+        if not value:
+            value = fallback or "user"
+        if len(value) <= USERNAME_MAX_LEN:
+            return value
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+        keep = USERNAME_MAX_LEN - 9
+        if keep <= 0:
+            return digest[:USERNAME_MAX_LEN]
+        return f"{value[:keep]}-{digest}"
+
 
     def _load_jwks():
         now = time.time()
@@ -270,9 +284,10 @@ data:
             raise HTTPException(status_code=401, detail="Missing subject")
 
         email = decoded.get("email") or decoded.get("preferred_username") or f"{sub}@idp.local"
-        preferred_username = decoded.get("preferred_username") or email
-        name = decoded.get("name") or preferred_username
-        oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": preferred_username}}
+        raw_username = decoded.get("preferred_username") or email
+        preferred_username = normalize_username(raw_username, sub)
+        name = decoded.get("name") or raw_username or preferred_username
+        oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": raw_username}}
 
         upsert_user(sub, email, name, preferred_username, oauth)
         token, ttl = mint_webui_token(sub)
