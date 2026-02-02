@@ -105,8 +105,9 @@ data:
     import bcrypt
     import jwt
     import psycopg2
+    import threading
+    import urllib.request
     from fastapi import FastAPI, Form, HTTPException
-    from jwt import PyJWKClient
 
     ISSUER = os.environ.get("KEYCLOAK_ISSUER", "https://auth.suncoast.systems/realms/external")
     JWKS_URL = os.environ.get(
@@ -116,6 +117,11 @@ data:
     WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "")
     DATABASE_URL = os.environ.get("DATABASE_URL", "")
     JWT_EXPIRES_IN = os.environ.get("WEBUI_JWT_EXPIRES_IN", "4w")
+    JWKS_CACHE_SECONDS = int(os.environ.get("JWKS_CACHE_SECONDS", "300"))
+    JWKS_TIMEOUT_SECONDS = int(os.environ.get("JWKS_TIMEOUT_SECONDS", "5"))
+
+    _jwks_cache = {"data": None, "loaded_at": 0.0}
+    _jwks_lock = threading.Lock()
 
     app = FastAPI()
 
@@ -131,9 +137,47 @@ data:
         except Exception:
             return 4 * 604800
 
+    def _load_jwks():
+        now = time.time()
+        cached = _jwks_cache["data"]
+        if cached and now - _jwks_cache["loaded_at"] < JWKS_CACHE_SECONDS:
+            return cached
+        with _jwks_lock:
+            now = time.time()
+            cached = _jwks_cache["data"]
+            if cached and now - _jwks_cache["loaded_at"] < JWKS_CACHE_SECONDS:
+                return cached
+            try:
+                with urllib.request.urlopen(JWKS_URL, timeout=JWKS_TIMEOUT_SECONDS) as resp:
+                    data = json.load(resp)
+                _jwks_cache["data"] = data
+                _jwks_cache["loaded_at"] = now
+                return data
+            except Exception:
+                if _jwks_cache["data"]:
+                    return _jwks_cache["data"]
+                raise
+
+    def _find_signing_key(token: str):
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        if not kid:
+            return None
+        jwks = _load_jwks() or {}
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+        return None
+
     def get_signing_key(token: str):
-        jwk_client = PyJWKClient(JWKS_URL)
-        return jwk_client.get_signing_key_from_jwt(token).key
+        key = _find_signing_key(token)
+        if key:
+            return key
+        _jwks_cache["loaded_at"] = 0.0
+        key = _find_signing_key(token)
+        if key:
+            return key
+        raise HTTPException(status_code=401, detail="Invalid subject token")
 
     def verify_token(token: str):
         try:
