@@ -1671,6 +1671,217 @@ spec:
         platform.suncoast.systems/redeploy-at: "2026-02-07T14:55:00Z"
     spec:
       serviceAccountName: openwebui
+      initContainers:
+        - name: openwebui-db-autoheal
+          image: ghcr.io/open-webui/open-webui:latest
+          imagePullPolicy: IfNotPresent
+          workingDir: /app/backend
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+
+              python - <<'PY'
+              import os
+              import re
+              import secrets
+              import sys
+              import traceback
+              from pathlib import Path
+              from urllib.parse import unquote, urlparse
+
+              def env_bool(name: str, default: bool) -> bool:
+                  value = os.environ.get(name)
+                  if value is None:
+                      return default
+                  return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+              AUTOHEAL = env_bool("OPENWEBUI_DB_AUTOHEAL", True)
+              RESET_ON_FAILURE = env_bool("OPENWEBUI_DB_RESET_ON_MIGRATION_FAILURE", True)
+              RESET_SCHEMA = os.environ.get("OPENWEBUI_DB_RESET_SCHEMA", "openwebui")
+
+              # The container image sets WEBUI_SECRET_KEY="" by default. Open WebUI treats that as a missing required
+              # env var when WEBUI_AUTH=true. The main container's start.sh generates a key file; this initContainer
+              # does not run start.sh, so we synthesize a key when missing to unblock imports/migrations.
+              if os.environ.get("WEBUI_SECRET_KEY", "").strip() == "":
+                  if os.environ.get("WEBUI_JWT_SECRET_KEY", "").strip() == "":
+                      os.environ["WEBUI_SECRET_KEY"] = secrets.token_urlsafe(32)
+
+              # Avoid side effects from Open WebUI imports (it runs migrations on import in some modules).
+              # We run migrations explicitly and fail fast on errors.
+              os.environ["ENABLE_DB_MIGRATIONS"] = "false"
+
+              def resolve_database_url() -> str:
+                  # Let Open WebUI compute its default (sqlite:///.../webui.db) when DATABASE_URL isn't set.
+                  from open_webui.env import DATABASE_URL as DEFAULT_DATABASE_URL  # type: ignore
+
+                  return os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+
+              def run_migrations(database_url: str) -> None:
+                  # 1) Peewee migrations (Open WebUI internal migrations)
+                  from open_webui.internal.db import handle_peewee_migration  # type: ignore
+
+                  handle_peewee_migration(database_url)
+
+                  # 2) Alembic migrations (main schema)
+                  from alembic import command  # type: ignore
+                  from alembic.config import Config  # type: ignore
+                  from open_webui.env import OPEN_WEBUI_DIR  # type: ignore
+
+                  alembic_cfg = Config(OPEN_WEBUI_DIR / "alembic.ini")
+                  alembic_cfg.set_main_option("script_location", str(OPEN_WEBUI_DIR / "migrations"))
+                  command.upgrade(alembic_cfg, "head")
+
+              def reset_sqlite(database_url: str) -> None:
+                  from open_webui.env import DATA_DIR  # type: ignore
+
+                  parsed = urlparse(database_url)
+                  # For sqlite:////abs/path.db => parsed.path == '//abs/path.db'
+                  db_path = unquote(parsed.path or "")
+                  if db_path.startswith("//"):
+                      db_path = db_path[1:]
+                  if not db_path:
+                      db_path = str(Path(DATA_DIR) / "webui.db")
+
+                  base = Path(db_path)
+                  for path in (
+                      base,
+                      Path(str(base) + "-wal"),
+                      Path(str(base) + "-shm"),
+                      Path(str(base) + "-journal"),
+                  ):
+                      try:
+                          if path.exists():
+                              path.unlink()
+                              print(f"Deleted sqlite file: {path}")
+                      except Exception as exc:
+                          raise RuntimeError(f"Failed deleting sqlite file {path}: {exc}") from exc
+
+              def reset_postgres_schema(database_url: str, schema: str) -> None:
+                  if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema or ""):
+                      raise ValueError(f"Refusing to reset schema with unsafe name: {schema!r}")
+
+                  from sqlalchemy import create_engine, text  # type: ignore
+
+                  engine = create_engine(database_url, pool_pre_ping=True)
+                  try:
+                      reset_sql = f"""
+              DO $$
+              DECLARE r RECORD;
+              BEGIN
+                -- Views
+                FOR r IN (
+                  SELECT table_schema, table_name
+                  FROM information_schema.views
+                  WHERE table_schema = '{schema}'
+                ) LOOP
+                  EXECUTE format('DROP VIEW IF EXISTS %I.%I CASCADE', r.table_schema, r.table_name);
+                END LOOP;
+
+                -- Tables
+                FOR r IN (
+                  SELECT schemaname, tablename
+                  FROM pg_tables
+                  WHERE schemaname = '{schema}'
+                ) LOOP
+                  EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', r.schemaname, r.tablename);
+                END LOOP;
+
+                -- Sequences (some may remain after dropping tables)
+                FOR r IN (
+                  SELECT sequence_schema, sequence_name
+                  FROM information_schema.sequences
+                  WHERE sequence_schema = '{schema}'
+                ) LOOP
+                  EXECUTE format('DROP SEQUENCE IF EXISTS %I.%I CASCADE', r.sequence_schema, r.sequence_name);
+                END LOOP;
+
+                -- Functions (identity args are required to drop overloaded functions)
+                FOR r IN (
+                  SELECT n.nspname AS schemaname,
+                         p.proname AS funcname,
+                         pg_get_function_identity_arguments(p.oid) AS args
+                  FROM pg_proc p
+                  JOIN pg_namespace n ON n.oid = p.pronamespace
+                  WHERE n.nspname = '{schema}'
+                ) LOOP
+                  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I(%s) CASCADE', r.schemaname, r.funcname, r.args);
+                END LOOP;
+
+                -- Types (enums, composites, domains) can block a clean re-migrate if left behind.
+                FOR r IN (
+                  SELECT n.nspname AS schemaname, t.typname AS typename
+                  FROM pg_type t
+                  JOIN pg_namespace n ON n.oid = t.typnamespace
+                  WHERE n.nspname = '{schema}'
+                    AND t.typtype IN ('e','c','d')
+                    AND t.typname NOT LIKE 'pg_%'
+                ) LOOP
+                  EXECUTE format('DROP TYPE IF EXISTS %I.%I CASCADE', r.schemaname, r.typename);
+                END LOOP;
+              END$$;
+              """
+                      with engine.begin() as conn:
+                          # Keep the schema itself (avoids requiring database-level CREATE privileges) but wipe its contents.
+                          conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS \"{schema}\"'))
+                          conn.execute(text(reset_sql))
+                      print(f"Reset Postgres schema: {schema}")
+                  finally:
+                      engine.dispose()
+
+              def reset_database(database_url: str) -> None:
+                  scheme = (urlparse(database_url).scheme or "").lower()
+                  if scheme.startswith("sqlite"):
+                      reset_sqlite(database_url)
+                      return
+                  if scheme in {"postgresql", "postgres"}:
+                      reset_postgres_schema(database_url, RESET_SCHEMA)
+                      return
+                  raise ValueError(f"Unsupported DATABASE_URL scheme for auto-heal reset: {scheme!r}")
+
+              database_url = resolve_database_url()
+              scheme = (urlparse(database_url).scheme or "").lower()
+              print(f"Open WebUI DB auto-heal init starting (scheme={scheme}, autoheal={AUTOHEAL})")
+
+              try:
+                  run_migrations(database_url)
+                  print("DB migrations succeeded.")
+              except Exception as exc:
+                  print(f"DB migrations failed: {exc!r}", file=sys.stderr)
+                  traceback.print_exc()
+
+                  if not (AUTOHEAL and RESET_ON_FAILURE):
+                      sys.exit(1)
+
+                  print("Attempting DB reset (data loss) and re-migrate...")
+                  try:
+                      reset_database(database_url)
+                      run_migrations(database_url)
+                      print("DB reset + migrations succeeded.")
+                  except Exception as exc2:
+                      print(f"DB reset attempt failed: {exc2!r}", file=sys.stderr)
+                      traceback.print_exc()
+                      sys.exit(1)
+              PY
+          env:
+            - name: OPENWEBUI_DB_AUTOHEAL
+              value: "true"
+            - name: OPENWEBUI_DB_RESET_ON_MIGRATION_FAILURE
+              value: "true"
+            - name: OPENWEBUI_DB_RESET_SCHEMA
+              value: "openwebui"
+          envFrom:
+            - configMapRef:
+                name: openwebui-oidc-config
+            - secretRef:
+                name: openwebui-db-url
+            - secretRef:
+                name: openwebui-oidc-secrets
+            - secretRef:
+                name: openwebui-openai
+          volumeMounts:
+            - name: webui-data
+              mountPath: /app/backend/data
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
