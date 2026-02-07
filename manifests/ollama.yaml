@@ -1659,6 +1659,9 @@ spec:
     metadata:
       labels:
         app: open-webui
+      annotations:
+        # Bump pod template to force a rollout when needed (and trigger ArgoCD sync hooks).
+        platform.suncoast.systems/redeploy-at: "2026-02-07T14:55:00Z"
     spec:
       serviceAccountName: openwebui
       containers:
