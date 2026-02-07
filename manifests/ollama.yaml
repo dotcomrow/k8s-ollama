@@ -811,6 +811,13 @@ spec:
               echo "Ensuring openwebui.tool.access_control column exists..."
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
                 "ALTER TABLE IF EXISTS openwebui.tool ADD COLUMN IF NOT EXISTS access_control json;"
+
+              # Open WebUI v0.7.x expects model.access_control + model.is_active.
+              echo "Ensuring openwebui.model access_control + is_active columns exist..."
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+                "ALTER TABLE IF EXISTS openwebui.model ADD COLUMN IF NOT EXISTS access_control json;"
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+                "ALTER TABLE IF EXISTS openwebui.model ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true;"
               echo "DB schema compatibility checks complete."
           env:
             - name: POD_NAMESPACE
@@ -1805,6 +1812,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+    platform.suncoast.systems/openwebui-db-schema-compat: "v0.7"
     # Gravitee discovery
     gravitee.io/expose: "true"
     gravitee.io/context-path: "/open-webui"
