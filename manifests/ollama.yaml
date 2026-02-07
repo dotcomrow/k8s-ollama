@@ -304,6 +304,9 @@ kind: Deployment
 metadata:
   name: openwebui-auth-bridge
   namespace: ollama
+  annotations:
+    # Needs Vault-synced secrets to exist first.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1
   selector:
@@ -750,7 +753,12 @@ metadata:
   labels:
     app: ollama
     platform.suncoast.systems/vpa-exclude: "true"
+  annotations:
+    # Runs after initial secrets sync so ArgoCD isn't blocked during the first install.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
+  # Pulling large models in the initContainer can take longer than the default 10m.
+  progressDeadlineSeconds: 7200
   strategy:
     type: Recreate
   replicas: 1
@@ -1878,6 +1886,8 @@ metadata:
   labels:
     app: open-webui-teleport-proxy
   annotations:
+    # Depends on the open-webui Service existing for nginx upstream DNS resolution.
+    argocd.argoproj.io/sync-wave: "4"
     reloader.stakater.com/auto: "true"
     reloader.stakater.com/configmap: "open-webui-teleport-proxy"
 spec:
