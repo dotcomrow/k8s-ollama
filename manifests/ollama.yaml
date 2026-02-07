@@ -1757,7 +1757,10 @@ spec:
                       except Exception as exc:
                           raise RuntimeError(f"Failed deleting sqlite file {path}: {exc}") from exc
 
-              def reset_postgres_schema(database_url: str, schema: str) -> None:
+              def quote_ident(value: str) -> str:
+                  return '"' + value.replace('"', '""') + '"'
+
+              def reset_postgres_schema(database_url: str, schema: str, *, best_effort: bool = False) -> None:
                   if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema or ""):
                       raise ValueError(f"Refusing to reset schema with unsafe name: {schema!r}")
 
@@ -1765,66 +1768,76 @@ spec:
 
                   engine = create_engine(database_url, pool_pre_ping=True)
                   try:
-                      reset_sql = f"""
-              DO $$
-              DECLARE r RECORD;
-              BEGIN
-                -- Views
-                FOR r IN (
-                  SELECT table_schema, table_name
-                  FROM information_schema.views
-                  WHERE table_schema = '{schema}'
-                ) LOOP
-                  EXECUTE format('DROP VIEW IF EXISTS %I.%I CASCADE', r.table_schema, r.table_name);
-                END LOOP;
-
-                -- Tables
-                FOR r IN (
-                  SELECT schemaname, tablename
-                  FROM pg_tables
-                  WHERE schemaname = '{schema}'
-                ) LOOP
-                  EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', r.schemaname, r.tablename);
-                END LOOP;
-
-                -- Sequences (some may remain after dropping tables)
-                FOR r IN (
-                  SELECT sequence_schema, sequence_name
-                  FROM information_schema.sequences
-                  WHERE sequence_schema = '{schema}'
-                ) LOOP
-                  EXECUTE format('DROP SEQUENCE IF EXISTS %I.%I CASCADE', r.sequence_schema, r.sequence_name);
-                END LOOP;
-
-                -- Functions (identity args are required to drop overloaded functions)
-                FOR r IN (
-                  SELECT n.nspname AS schemaname,
-                         p.proname AS funcname,
-                         pg_get_function_identity_arguments(p.oid) AS args
-                  FROM pg_proc p
-                  JOIN pg_namespace n ON n.oid = p.pronamespace
-                  WHERE n.nspname = '{schema}'
-                ) LOOP
-                  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I(%s) CASCADE', r.schemaname, r.funcname, r.args);
-                END LOOP;
-
-                -- Types (enums, composites, domains) can block a clean re-migrate if left behind.
-                FOR r IN (
-                  SELECT n.nspname AS schemaname, t.typname AS typename
-                  FROM pg_type t
-                  JOIN pg_namespace n ON n.oid = t.typnamespace
-                  WHERE n.nspname = '{schema}'
-                    AND t.typtype IN ('e','c','d')
-                    AND t.typname NOT LIKE 'pg_%'
-                ) LOOP
-                  EXECUTE format('DROP TYPE IF EXISTS %I.%I CASCADE', r.schemaname, r.typename);
-                END LOOP;
-              END$$;
-              """
                       with engine.begin() as conn:
-                          # Wipe schema contents without requiring CREATE ON DATABASE.
-                          conn.execute(text(reset_sql))
-                      print(f"Reset Postgres schema contents: {schema}")
+                          exists = conn.execute(
+                              text(
+                                  "SELECT 1 FROM information_schema.schemata WHERE schema_name = :schema"
+                              ),
+                              {"schema": schema},
+                          ).scalar()
+                          if exists != 1:
+                              print(f"Schema does not exist; skipping: {schema}")
+                              return
+
+                          def drop(stmt: str) -> None:
+                              try:
+                                  conn.execute(text(stmt))
+                              except Exception as exc:
+                                  if best_effort:
+                                      print(f"WARN: failed to execute: {stmt}: {exc!r}")
+                                      return
+                                  raise
+
+                          # Drop views first to avoid dependency surprises.
+                          views = (
+                              conn.execute(
+                                  text(
+                                      "SELECT table_name FROM information_schema.views WHERE table_schema = :schema"
+                                  ),
+                                  {"schema": schema},
+                              )
+                              .scalars()
+                              .all()
+                          )
+                          for view in views:
+                              drop(
+                                  f"DROP VIEW IF EXISTS {quote_ident(schema)}.{quote_ident(view)} CASCADE"
+                              )
+
+                          tables = (
+                              conn.execute(
+                                  text(
+                                      "SELECT table_name FROM information_schema.tables "
+                                      "WHERE table_schema = :schema AND table_type = 'BASE TABLE'"
+                                  ),
+                                  {"schema": schema},
+                              )
+                              .scalars()
+                              .all()
+                          )
+                          for table in tables:
+                              drop(
+                                  f"DROP TABLE IF EXISTS {quote_ident(schema)}.{quote_ident(table)} CASCADE"
+                              )
+
+                          # Some sequences can remain even after dropping tables (non-owned sequences).
+                          sequences = (
+                              conn.execute(
+                                  text(
+                                      "SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = :schema"
+                                  ),
+                                  {"schema": schema},
+                              )
+                              .scalars()
+                              .all()
+                          )
+                          for seq in sequences:
+                              drop(
+                                  f"DROP SEQUENCE IF EXISTS {quote_ident(schema)}.{quote_ident(seq)} CASCADE"
+                              )
+                      print(
+                          f"Reset Postgres schema contents: {schema} (best_effort={best_effort})"
+                      )
                   finally:
                       engine.dispose()
 
@@ -1845,11 +1858,16 @@ spec:
                                   schemas.append(value)
 
                       seen = set()
+                      primary_schema = RESET_SCHEMA
                       for schema in schemas:
                           if schema in seen:
                               continue
                           seen.add(schema)
-                          reset_postgres_schema(database_url, schema)
+                          reset_postgres_schema(
+                              database_url,
+                              schema,
+                              best_effort=(schema != primary_schema),
+                          )
                       return
                   raise ValueError(f"Unsupported DATABASE_URL scheme for auto-heal reset: {scheme!r}")
 
