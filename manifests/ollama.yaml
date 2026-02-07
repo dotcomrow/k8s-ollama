@@ -744,6 +744,86 @@ spec:
           secret:
             secretName: vault-root-token
 ---
+# DB SCHEMA COMPATIBILITY (ensures Open WebUI can start on an existing DB)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openwebui-db-schema-compat
+  namespace: ollama
+  annotations:
+    # Must run after Vault has created the DB URL secret but before Open WebUI starts.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded,HookFailed
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "1"
+    linkerd.io/inject: disabled
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: openwebui
+      restartPolicy: Never
+      containers:
+        - name: db-compat
+          image: postgres:16-alpine
+          command: ["sh","-c"]
+          args:
+            - |
+              set -eu
+
+              apk add --no-cache curl jq >/dev/null
+
+              wait_for_secret_value() {
+                secret_name="$1"
+                key_name="$2"
+                namespace="${POD_NAMESPACE:-ollama}"
+                api="https://kubernetes.default.svc"
+                token_path="/var/run/secrets/kubernetes.io/serviceaccount/token"
+                ca_path="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+                while true; do
+                  token="$(cat "$token_path")"
+                  secret_json="$(curl -fsS --cacert "$ca_path" -H "Authorization: Bearer $token" \
+                    "$api/api/v1/namespaces/${namespace}/secrets/${secret_name}" 2>/tmp/secret_err.log || true)"
+                  if [ -n "$secret_json" ]; then
+                    value_b64="$(echo "$secret_json" | jq -r --arg key "$key_name" '.data[$key] // empty')"
+                    if [ -n "$value_b64" ]; then
+                      printf '%s' "$value_b64" | base64 -d
+                      return 0
+                    fi
+                  fi
+                  echo "Waiting for ${secret_name}/${key_name}..." >&2
+                  sleep 5
+                done
+              }
+
+              if [ -z "${DATABASE_URL:-}" ]; then
+                echo "DATABASE_URL missing; waiting for openwebui-db-url..." >&2
+                DATABASE_URL="$(wait_for_secret_value openwebui-db-url DATABASE_URL)"
+                export DATABASE_URL
+              fi
+
+              # Open WebUI v0.7.x expects tool.access_control (JSON). Older DBs may not have it.
+              echo "Ensuring openwebui.tool.access_control column exists..."
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+                "ALTER TABLE IF EXISTS openwebui.tool ADD COLUMN IF NOT EXISTS access_control json;"
+              echo "DB schema compatibility checks complete."
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-url
+                  key: DATABASE_URL
+                  optional: true
+---
 # OLLAMA (unchanged functionally)
 apiVersion: apps/v1
 kind: Deployment
