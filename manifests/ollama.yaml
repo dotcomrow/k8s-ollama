@@ -1822,10 +1822,9 @@ spec:
               END$$;
               """
                       with engine.begin() as conn:
-                          # Keep the schema itself (avoids requiring database-level CREATE privileges) but wipe its contents.
-                          conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS \"{schema}\"'))
+                          # Wipe schema contents without requiring CREATE ON DATABASE.
                           conn.execute(text(reset_sql))
-                      print(f"Reset Postgres schema: {schema}")
+                      print(f"Reset Postgres schema contents: {schema}")
                   finally:
                       engine.dispose()
 
@@ -1835,7 +1834,22 @@ spec:
                       reset_sqlite(database_url)
                       return
                   if scheme in {"postgresql", "postgres"}:
-                      reset_postgres_schema(database_url, RESET_SCHEMA)
+                      schemas = []
+                      if RESET_SCHEMA:
+                          schemas.append(RESET_SCHEMA)
+                      extra = os.environ.get("OPENWEBUI_DB_RESET_EXTRA_SCHEMAS", "public").strip()
+                      if extra:
+                          for raw in extra.split(","):
+                              value = raw.strip()
+                              if value:
+                                  schemas.append(value)
+
+                      seen = set()
+                      for schema in schemas:
+                          if schema in seen:
+                              continue
+                          seen.add(schema)
+                          reset_postgres_schema(database_url, schema)
                       return
                   raise ValueError(f"Unsupported DATABASE_URL scheme for auto-heal reset: {scheme!r}")
 
@@ -1870,6 +1884,8 @@ spec:
               value: "true"
             - name: OPENWEBUI_DB_RESET_SCHEMA
               value: "openwebui"
+            - name: OPENWEBUI_DB_RESET_EXTRA_SCHEMAS
+              value: "public"
           envFrom:
             - configMapRef:
                 name: openwebui-oidc-config
