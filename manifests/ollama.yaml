@@ -52,6 +52,23 @@ data:
   ENABLE_OAUTH_SIGNUP: "true"
   OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
   OAUTH_PROVIDER_NAME: "Keycloak"
+  # Keep Open WebUI config GitOps-driven; otherwise "persistent config" can cause env changes (like DEFAULT_USER_ROLE)
+  # to be ignored after the first launch.
+  ENABLE_PERSISTENT_CONFIG: "false"
+  ENABLE_OAUTH_PERSISTENT_CONFIG: "false"
+  # New OAuth users were getting created with role=pending which blocks access.
+  # Use role mapping (when available) and default to "user" so sign-ins work without manual activation.
+  DEFAULT_USER_ROLE: "user"
+  ENABLE_OAUTH_ROLE_MANAGEMENT: "true"
+  # Keycloak role mapper (added by k8s-keycloak configurator) populates a top-level "roles" claim in userinfo.
+  OAUTH_ROLES_CLAIM: "roles"
+  # Allow all authenticated users in the Keycloak realm by default.
+  # Keycloak assigns "default-roles-<realm>" (here: default-roles-external) to every user.
+  OAUTH_ALLOWED_ROLES: "default-roles-external"
+  # Promote members of these Keycloak roles to Open WebUI admin.
+  # - ggl:keycloak-admins-suncoast-systems: existing Google group-backed role.
+  # - ggl:openwebui-admins-suncoast-systems: future dedicated group (optional).
+  OAUTH_ADMIN_ROLES: "admin,ggl:keycloak-admins-suncoast-systems,ggl:openwebui-admins-suncoast-systems"
   ENABLE_LOGIN_FORM: "false"
   ENABLE_PASSWORD_AUTH: "false"
   ENABLE_SIGNUP: "false"
