@@ -2019,6 +2019,32 @@ spec:
               exec bash start.sh
           ports:
             - containerPort: 8080
+          # Self-heal when Open WebUI gets into a bad DB state (e.g., Yugabyte schema version mismatch):
+          # - Startup probe gates readiness/liveness until /api/config is healthy (avoids killing during cold start).
+          # - Readiness removes the pod from Service when backend can’t serve.
+          # - Liveness restarts the container if it stays unhealthy.
+          startupProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 60 # 10 minutes
+          readinessProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 5
           resources:
             requests:
               cpu: 250m
