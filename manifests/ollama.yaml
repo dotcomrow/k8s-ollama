@@ -2309,12 +2309,6 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: directus
-          podSelector:
-            matchLabels:
-              app: directus
       ports:
         - protocol: TCP
           port: 11434
@@ -2339,12 +2333,6 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: directus
-          podSelector:
-            matchLabels:
-              app: directus
       ports:
         - protocol: TCP
           port: 8080
@@ -2627,12 +2615,6 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: directus
-          podSelector:
-            matchLabels:
-              app: directus
         - podSelector:
             matchLabels:
               app: openwebui-model-sync
@@ -2662,12 +2644,6 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: directus
-          podSelector:
-            matchLabels:
-              app: directus
         - podSelector:
             matchLabels:
               app: open-webui-openapi
@@ -2801,21 +2777,6 @@ spec:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
 ---
-# Allow Directus (CMS) to call OpenWebUI APIs if needed (e.g., as an OpenAI-compatible proxy).
-apiVersion: policy.linkerd.io/v1beta1
-kind: ServerAuthorization
-metadata:
-  name: open-webui-from-directus
-  namespace: ollama
-spec:
-  server:
-    name: open-webui
-  client:
-    meshTLS:
-      serviceAccounts:
-        - name: directus
-          namespace: directus
----
 apiVersion: policy.linkerd.io/v1beta1
 kind: Server
 metadata:
@@ -2857,17 +2818,3 @@ spec:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
 ---
-# Allow Directus (CMS) to call Ollama's OpenAI-compatible API for internal model inference.
-apiVersion: policy.linkerd.io/v1beta1
-kind: ServerAuthorization
-metadata:
-  name: ollama-from-directus
-  namespace: ollama
-spec:
-  server:
-    name: ollama
-  client:
-    meshTLS:
-      serviceAccounts:
-        - name: directus
-          namespace: directus
