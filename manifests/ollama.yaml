@@ -42,7 +42,7 @@ metadata:
 data:
   models.txt: |
     deepseek-r1:14b
-    llama3.1:8b-instruct
+    llama3.1:8b
 ---
 apiVersion: v1
 kind: ConfigMap
