@@ -2309,6 +2309,12 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: directus
+          podSelector:
+            matchLabels:
+              app: directus
       ports:
         - protocol: TCP
           port: 11434
@@ -2333,6 +2339,12 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: directus
+          podSelector:
+            matchLabels:
+              app: directus
       ports:
         - protocol: TCP
           port: 8080
@@ -2615,6 +2627,12 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: directus
+          podSelector:
+            matchLabels:
+              app: directus
         - podSelector:
             matchLabels:
               app: openwebui-model-sync
@@ -2644,6 +2662,12 @@ spec:
           podSelector:
             matchLabels:
               app: gravitee-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: directus
+          podSelector:
+            matchLabels:
+              app: directus
         - podSelector:
             matchLabels:
               app: open-webui-openapi
