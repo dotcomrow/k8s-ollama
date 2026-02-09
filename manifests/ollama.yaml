@@ -2777,6 +2777,21 @@ spec:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
 ---
+# Allow Directus (CMS) to call OpenWebUI APIs if needed (e.g., as an OpenAI-compatible proxy).
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: open-webui-from-directus
+  namespace: ollama
+spec:
+  server:
+    name: open-webui
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: directus
+          namespace: directus
+---
 apiVersion: policy.linkerd.io/v1beta1
 kind: Server
 metadata:
@@ -2817,3 +2832,18 @@ spec:
     meshTLS:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
+---
+# Allow Directus (CMS) to call Ollama's OpenAI-compatible API for internal model inference.
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: ollama-from-directus
+  namespace: ollama
+spec:
+  server:
+    name: ollama
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: directus
+          namespace: directus
