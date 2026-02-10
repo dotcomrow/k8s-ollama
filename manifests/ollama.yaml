@@ -1935,7 +1935,7 @@ spec:
             - name: webui-data
               mountPath: /app/backend/data
             - name: openwebui-sitecustomize
-              mountPath: /app/backend/sitecustomize.py
+              mountPath: /usr/local/lib/python3.11/site-packages/sitecustomize.py
               subPath: sitecustomize.py
               readOnly: true
       containers:
@@ -2091,7 +2091,7 @@ spec:
             - name: webui-data
               mountPath: /app/backend/data
             - name: openwebui-sitecustomize
-              mountPath: /app/backend/sitecustomize.py
+              mountPath: /usr/local/lib/python3.11/site-packages/sitecustomize.py
               subPath: sitecustomize.py
               readOnly: true
       volumes:
