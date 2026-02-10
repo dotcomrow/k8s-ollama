@@ -1673,7 +1673,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
     reloader.stakater.com/auto: "true"
-    reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config"
+    reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config,openwebui-sitecustomize"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"
 spec:
   replicas: 1
@@ -1934,6 +1934,10 @@ spec:
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
+            - name: openwebui-sitecustomize
+              mountPath: /app/backend/sitecustomize.py
+              subPath: sitecustomize.py
+              readOnly: true
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:latest
@@ -2086,6 +2090,10 @@ spec:
               readOnly: true
             - name: webui-data
               mountPath: /app/backend/data
+            - name: openwebui-sitecustomize
+              mountPath: /app/backend/sitecustomize.py
+              subPath: sitecustomize.py
+              readOnly: true
       volumes:
         - name: openwebui-config
           configMap:
@@ -2093,6 +2101,9 @@ spec:
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
+        - name: openwebui-sitecustomize
+          configMap:
+            name: openwebui-sitecustomize
 ---
 apiVersion: v1
 kind: Service

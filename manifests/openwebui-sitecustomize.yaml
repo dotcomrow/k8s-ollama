@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openwebui-sitecustomize
+  namespace: ollama
+  annotations:
+    # Ensure the patch is present before the Open WebUI deployment rolls out.
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app: open-webui
+data:
+  sitecustomize.py: |
+    """Open WebUI runtime patch for Yugabyte transient errors.
+
+    Yugabyte can return SQLSTATE 40001 (SerializationFailure) for retryable operations,
+    including "schema version mismatch ... expected X, got Y". Open WebUI does not
+    retry these by default which can surface as HTTP 500s (notably on /api/models).
+
+    This patch adds safe retries for read-only SQLAlchemy Session.execute() calls.
+    """
+
+    from __future__ import annotations
+
+    import logging
+    import os
+    import random
+    import time
+    from typing import Any
+
+    _log = logging.getLogger("openwebui.yugabyte")
+
+
+    def _env_int(name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        value = value.strip()
+        if not value:
+            return default
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+
+    # Tweakable via env if needed.
+    _MAX_RETRIES = _env_int("YB_SCHEMA_MISMATCH_MAX_RETRIES", 5)
+    _BASE_DELAY_MS = _env_int("YB_SCHEMA_MISMATCH_BASE_DELAY_MS", 50)
+    _MAX_DELAY_MS = _env_int("YB_SCHEMA_MISMATCH_MAX_DELAY_MS", 2000)
+
+
+    def _is_retryable_yb_error(exc: BaseException) -> bool:
+        msg = str(exc).lower()
+        if "schema version mismatch" in msg:
+            return True
+
+        orig = getattr(exc, "orig", None)
+        if orig is not None:
+            if "schema version mismatch" in str(orig).lower():
+                return True
+            if getattr(orig, "pgcode", None) == "40001":
+                # Yugabyte frequently uses 40001 for retryable read restarts.
+                return True
+
+        if getattr(exc, "pgcode", None) == "40001":
+            return True
+
+        return False
+
+
+    def _is_read_statement(statement: Any) -> bool:
+        try:
+            if getattr(statement, "is_select", False):
+                return True
+        except Exception:
+            pass
+
+        try:
+            head = str(statement).lstrip().upper()
+        except Exception:
+            return False
+
+        return head.startswith("SELECT") or head.startswith("WITH") or head.startswith("SHOW")
+
+
+    def _has_pending_writes(session: Any) -> bool:
+        # Avoid retrying when the session has pending writes, since we rollback() on retry.
+        try:
+            return bool(session.new or session.dirty or session.deleted)
+        except Exception:
+            return False
+
+
+    def _backoff_seconds(attempt: int) -> float:
+        delay_ms = min(_MAX_DELAY_MS, _BASE_DELAY_MS * (2**attempt))
+        jitter_ms = random.randint(0, int(delay_ms * 0.2) + 1)
+        return (delay_ms + jitter_ms) / 1000.0
+
+
+    def _patch_sqlalchemy() -> None:
+        try:
+            from sqlalchemy.orm import Session  # type: ignore
+        except Exception as exc:
+            _log.debug("SQLAlchemy not available for Yugabyte retry patch: %r", exc)
+            return
+
+        if getattr(Session, "_openwebui_yb_retry_patched", False):
+            return
+
+        _orig_execute = Session.execute
+
+        def _execute_with_retry(self: Any, statement: Any, *args: Any, **kwargs: Any):
+            if _MAX_RETRIES <= 1:
+                return _orig_execute(self, statement, *args, **kwargs)
+
+            if (not _is_read_statement(statement)) or _has_pending_writes(self):
+                return _orig_execute(self, statement, *args, **kwargs)
+
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    return _orig_execute(self, statement, *args, **kwargs)
+                except Exception as exc:
+                    if _is_retryable_yb_error(exc) and attempt < (_MAX_RETRIES - 1):
+                        try:
+                            self.rollback()
+                        except Exception:
+                            pass
+                        time.sleep(_backoff_seconds(attempt))
+                        continue
+                    try:
+                        # Best-effort cleanup so callers don't inherit a broken session.
+                        self.rollback()
+                    except Exception:
+                        pass
+                    raise
+
+        Session.execute = _execute_with_retry  # type: ignore[assignment]
+        Session._openwebui_yb_retry_patched = True  # type: ignore[attr-defined]
+
+        _log.info(
+            "Enabled Yugabyte retry patch (max_retries=%s, base_delay_ms=%s)",
+            _MAX_RETRIES,
+            _BASE_DELAY_MS,
+        )
+
+
+    try:
+        _patch_sqlalchemy()
+    except Exception as _exc:
+        # Never block app startup due to the patch.
+        _log.debug("Yugabyte retry patch failed: %r", _exc)
+
