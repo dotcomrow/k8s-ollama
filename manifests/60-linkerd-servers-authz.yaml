@@ -1,0 +1,88 @@
+# =========================
+# Linkerd Policy: allow Gravitee + OpenWebUI to reach services
+# =========================
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: open-webui
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: open-webui-from-gravitee-and-openwebui
+  namespace: ollama
+spec:
+  server:
+    name: open-webui
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: gravitee
+          namespace: k8s-api-gateway
+        - name: openwebui
+          namespace: ollama
+        - name: open-webui-openapi
+          namespace: ollama
+        - name: open-webui-teleport-proxy
+          namespace: ollama
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: open-webui-from-ollama-namespace
+  namespace: ollama
+spec:
+  server:
+    name: open-webui
+  client:
+    meshTLS:
+      identities:
+        - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: ollama
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  port: 11434
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: ollama-from-gravitee-and-openwebui
+  namespace: ollama
+spec:
+  server:
+    name: ollama
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: gravitee
+          namespace: k8s-api-gateway
+        - name: openwebui
+          namespace: ollama
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: ollama-from-ollama-namespace
+  namespace: ollama
+spec:
+  server:
+    name: ollama
+  client:
+    meshTLS:
+      identities:
+        - "*.ollama.serviceaccount.identity.linkerd.cluster.local"

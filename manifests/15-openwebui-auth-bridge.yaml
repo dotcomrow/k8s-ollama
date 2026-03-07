@@ -1,0 +1,283 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openwebui-auth-bridge
+  namespace: ollama
+data:
+  requirements.txt: |
+    fastapi==0.115.5
+    uvicorn==0.30.6
+    PyJWT==2.9.0
+    cryptography==43.0.1
+    psycopg2-binary==2.9.9
+    bcrypt==4.2.0
+    python-multipart==0.0.9
+  app.py: |
+    import os
+    import time
+    import uuid
+    import json
+    import hashlib
+    import bcrypt
+    import jwt
+    import psycopg2
+    import threading
+    import urllib.request
+    from fastapi import FastAPI, Form, HTTPException
+
+    ISSUER = os.environ.get("KEYCLOAK_ISSUER", "https://auth.suncoast.systems/realms/external")
+    JWKS_URL = os.environ.get(
+        "KEYCLOAK_JWKS_URL",
+        "https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs",
+    )
+    WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "")
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
+    JWT_EXPIRES_IN = os.environ.get("WEBUI_JWT_EXPIRES_IN", "4w")
+    JWKS_CACHE_SECONDS = int(os.environ.get("JWKS_CACHE_SECONDS", "300"))
+    JWKS_TIMEOUT_SECONDS = int(os.environ.get("JWKS_TIMEOUT_SECONDS", "5"))
+    USERNAME_MAX_LEN = int(os.environ.get("WEBUI_USERNAME_MAX", "50"))
+
+    _jwks_cache = {"data": None, "loaded_at": 0.0}
+    _jwks_lock = threading.Lock()
+
+    app = FastAPI()
+
+    def parse_duration(value: str) -> int:
+        # Supports s, m, h, d, w. Defaults to 4w if invalid.
+        try:
+            num = int(value[:-1])
+            unit = value[-1]
+            mult = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}.get(unit)
+            if mult is None:
+                return 4 * 604800
+            return num * mult
+        except Exception:
+            return 4 * 604800
+
+    def normalize_username(value: str, fallback: str) -> str:
+        if not value:
+            value = fallback or "user"
+        if len(value) <= USERNAME_MAX_LEN:
+            return value
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+        keep = USERNAME_MAX_LEN - 9
+        if keep <= 0:
+            return digest[:USERNAME_MAX_LEN]
+        return f"{value[:keep]}-{digest}"
+
+
+    def _load_jwks():
+        now = time.time()
+        cached = _jwks_cache["data"]
+        if cached and now - _jwks_cache["loaded_at"] < JWKS_CACHE_SECONDS:
+            return cached
+        with _jwks_lock:
+            now = time.time()
+            cached = _jwks_cache["data"]
+            if cached and now - _jwks_cache["loaded_at"] < JWKS_CACHE_SECONDS:
+                return cached
+            try:
+                with urllib.request.urlopen(JWKS_URL, timeout=JWKS_TIMEOUT_SECONDS) as resp:
+                    data = json.load(resp)
+                _jwks_cache["data"] = data
+                _jwks_cache["loaded_at"] = now
+                return data
+            except Exception:
+                if _jwks_cache["data"]:
+                    return _jwks_cache["data"]
+                raise
+
+    def _find_signing_key(token: str):
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        if not kid:
+            return None
+        jwks = _load_jwks() or {}
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+        return None
+
+    def get_signing_key(token: str):
+        key = _find_signing_key(token)
+        if key:
+            return key
+        _jwks_cache["loaded_at"] = 0.0
+        key = _find_signing_key(token)
+        if key:
+            return key
+        raise HTTPException(status_code=401, detail="Invalid subject token")
+
+    def verify_token(token: str):
+        try:
+            key = get_signing_key(token)
+            return jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                issuer=ISSUER,
+                options={"verify_aud": False},
+            )
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid subject token")
+
+    def upsert_user(sub: str, email: str, name: str, preferred_username: str, oauth: dict):
+        if not DATABASE_URL:
+            raise HTTPException(status_code=500, detail="DATABASE_URL not set")
+        if not WEBUI_SECRET_KEY:
+            raise HTTPException(status_code=500, detail="WEBUI_SECRET_KEY not set")
+
+        now = int(time.time())
+        password = str(uuid.uuid4())
+        pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM auth WHERE id = %s", (sub,))
+                    if cur.fetchone() is None:
+                        cur.execute(
+                            "INSERT INTO auth (id, email, password, active) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                            (sub, email, pw_hash, True),
+                        )
+                    cur.execute("SELECT id FROM \"user\" WHERE id = %s", (sub,))
+                    if cur.fetchone() is None:
+                        cur.execute(
+                            """INSERT INTO "user" (
+                                id, email, username, role, name, profile_image_url,
+                                oauth, last_active_at, created_at, updated_at
+                              ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                              ON CONFLICT (id) DO NOTHING""",
+                            (
+                                sub,
+                                email,
+                                preferred_username,
+                                "user",
+                                name,
+                                "/user.png",
+                                json.dumps(oauth),
+                                now,
+                                now,
+                                now,
+                            ),
+                        )
+        finally:
+            conn.close()
+
+    def mint_webui_token(user_id: str):
+        ttl = parse_duration(JWT_EXPIRES_IN)
+        exp = int(time.time()) + ttl
+        payload = {"id": user_id, "exp": exp, "jti": str(uuid.uuid4())}
+        token = jwt.encode(payload, WEBUI_SECRET_KEY, algorithm="HS256")
+        return token, ttl
+
+    @app.post("/token")
+    def token_exchange(
+        grant_type: str = Form(...),
+        subject_token: str = Form(...),
+        subject_token_type: str = Form(None),
+        audience: str = Form(None),
+        client_id: str = Form(None),
+        client_secret: str = Form(None),
+    ):
+        if grant_type != "urn:ietf:params:oauth:grant-type:token-exchange":
+            raise HTTPException(status_code=400, detail="Unsupported grant_type")
+
+        decoded = verify_token(subject_token)
+
+        # Enforce audience match if provided
+        if audience:
+            aud = decoded.get("aud")
+            if isinstance(aud, list) and audience not in aud:
+                raise HTTPException(status_code=401, detail="Requested audience not available")
+            if isinstance(aud, str) and aud != audience:
+                raise HTTPException(status_code=401, detail="Requested audience not available")
+
+        sub = decoded.get("sub")
+        if not sub:
+            raise HTTPException(status_code=401, detail="Missing subject")
+
+        email = decoded.get("email") or decoded.get("preferred_username") or f"{sub}@idp.local"
+        raw_username = decoded.get("preferred_username") or email
+        preferred_username = normalize_username(raw_username, sub)
+        name = decoded.get("name") or raw_username or preferred_username
+        oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": raw_username}}
+
+        upsert_user(sub, email, name, preferred_username, oauth)
+        token, ttl = mint_webui_token(sub)
+
+        return {
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_in": ttl,
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui-auth-bridge
+  namespace: ollama
+  annotations:
+    # Needs Vault-synced secrets to exist first.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openwebui-auth-bridge
+  template:
+    metadata:
+      labels:
+        app: openwebui-auth-bridge
+      annotations:
+        reloader.stakater.com/configmap: "openwebui-auth-bridge"
+        reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
+    spec:
+      containers:
+        - name: openwebui-auth-bridge
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KEYCLOAK_ISSUER
+              value: "https://auth.suncoast.systems/realms/external"
+            - name: KEYCLOAK_JWKS_URL
+              value: "https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs"
+            - name: WEBUI_JWT_EXPIRES_IN
+              value: "4w"
+          envFrom:
+            - secretRef:
+                name: openwebui-db-url
+            - secretRef:
+                name: openwebui-oidc-secrets
+          ports:
+            - containerPort: 8080
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              pip install --no-cache-dir -r /app/requirements.txt >/dev/null
+              export PYTHONPATH=/app
+              python -m uvicorn app:app --app-dir /app --host 0.0.0.0 --port 8080
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          configMap:
+            name: openwebui-auth-bridge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-auth-bridge
+  namespace: ollama
+spec:
+  selector:
+    app: openwebui-auth-bridge
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

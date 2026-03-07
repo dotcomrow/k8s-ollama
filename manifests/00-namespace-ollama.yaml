@@ -1,0 +1,11 @@
+# Create the "ollama" namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+    platform.suncoast.systems/vpa-exclude: "true"
+  annotations:
+    linkerd.io/inject: enabled
+    field.cattle.io/projectId: local:applications

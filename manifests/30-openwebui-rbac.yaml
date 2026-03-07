@@ -1,0 +1,73 @@
+# OpenWebUI RBAC for pulling static creds into a K8s Secret
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openwebui
+  namespace: ollama
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-webui-openapi
+  namespace: ollama
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-writer
+  namespace: ollama
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: secret-writer-binding
+  namespace: ollama
+subjects:
+  - kind: ServiceAccount
+    name: openwebui
+    namespace: ollama
+roleRef:
+  kind: Role
+  name: secret-writer
+  apiGroup: rbac.authorization.k8s.io
+---
+# Wait hook RBAC for Gravitee plan readiness
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gravitee-plan-waiter
+  namespace: ollama
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gravitee-plan-waiter
+  namespace: ollama
+rules:
+  - apiGroups: ["gravitee.io"]
+    resources: ["apiv4definitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gravitee-plan-waiter
+  namespace: ollama
+subjects:
+  - kind: ServiceAccount
+    name: gravitee-plan-waiter
+    namespace: ollama
+roleRef:
+  kind: Role
+  name: gravitee-plan-waiter
+  apiGroup: rbac.authorization.k8s.io

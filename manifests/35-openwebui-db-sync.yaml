@@ -1,0 +1,483 @@
+# PASSWORD ROTATION CRONJOB (reads Vault static-creds, writes DATABASE_URL secret)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sync-openwebui-db-secret
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    linkerd.io/inject: disabled
+spec:
+  schedule: "0 0 * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          annotations:
+            linkerd.io/inject: disabled
+        spec:
+          serviceAccountName: openwebui
+          restartPolicy: Never
+          initContainers:
+            - name: load-kubectl
+              image: alpine/k8s:1.31.4
+              command: ["sh","-c"]
+              args: ["cp /usr/bin/kubectl /kubectl-bin/kubectl && chmod +x /kubectl-bin/kubectl"]
+              volumeMounts:
+                - name: kubectl-bin
+                  mountPath: /kubectl-bin
+          containers:
+            - name: vault-sync
+              image: ubuntu:22.04
+              command: ["/bin/bash","-c"]
+              args:
+                - |
+                  RETRY_INTERVAL=5
+                  echo "🔧 Installing tools..."
+                  while true; do
+                    apt-get update && apt-get install -y curl unzip jq postgresql-client && break
+                    echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."; sleep "$RETRY_INTERVAL"
+                  done
+                  echo "📌 Installing Vault CLI..."
+                  while true; do
+                    curl -fsSL -o vault.zip https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_linux_amd64.zip && break
+                    echo "⚠️ Vault download failed. Retrying..."; sleep "$RETRY_INTERVAL"
+                  done
+                  unzip -o vault.zip >/dev/null && mv vault /usr/local/bin/ && chmod +x /usr/local/bin/vault
+
+                  export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+
+                  if [ -f /vault-token/VAULT_TOKEN ]; then
+                    VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+                  elif [ -f /vault-token/token ]; then
+                    VAULT_TOKEN="$(cat /vault-token/token)"
+                  else
+                    echo "❌ No Vault token file found in /vault-token"
+                    ls -la /vault-token || true
+                    exit 1
+                  fi
+                  export VAULT_TOKEN
+
+                  while true; do
+                    CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
+                    if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
+                      USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
+                      PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
+                      echo "✅ Got static creds for user: $USERNAME"
+                      break
+                    fi
+                    echo "⚠️ Static creds not available yet. Retrying..."
+                    cat /tmp/vault_err.log || true
+                    sleep "$RETRY_INTERVAL"
+                  done
+
+                  USERNAME_ENC=$(printf '%s' "$USERNAME" | jq -sRr @uri)
+                  PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
+                  DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
+
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-db-url..."
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: openwebui-db-url
+                    namespace: ollama
+                  type: Opaque
+                  stringData:
+                    DATABASE_URL: ${DB_URL}
+                  EOF
+
+                  echo "✅ DATABASE_URL updated."
+
+                  while true; do
+                    OIDC_CLIENT_ID=$(vault kv get -field=value secret/keycloak-client-id-openwebui 2>/tmp/vault_err.log || true)
+                    OIDC_CLIENT_SECRET=$(vault kv get -field=value secret/keycloak-client-secret-openwebui 2>/tmp/vault_err.log || true)
+                    WEBUI_SECRET_KEY=$(vault kv get -field=value secret/openwebui-webui-secret-key 2>/tmp/vault_err.log || true)
+                    if [ -n "$OIDC_CLIENT_ID" ] && [ -n "$OIDC_CLIENT_SECRET" ] && [ -n "$WEBUI_SECRET_KEY" ]; then
+                      echo "✅ Got Keycloak client credentials"
+                      break
+                    fi
+                    echo "⚠️ Keycloak client credentials not available yet. Retrying..."
+                    cat /tmp/vault_err.log || true
+                    sleep "$RETRY_INTERVAL"
+                  done
+
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-oidc-secrets..."
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: openwebui-oidc-secrets
+                    namespace: ollama
+                  type: Opaque
+                  stringData:
+                    OAUTH_CLIENT_ID: ${OIDC_CLIENT_ID}
+                    OAUTH_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+                    WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+                  EOF
+
+                  echo "✅ OIDC secrets updated."
+
+                  while true; do
+                    OPENAI_API_KEY=$(vault kv get -field=value secret/open_ai_key 2>/tmp/vault_err.log || true)
+                    if [ -n "$OPENAI_API_KEY" ]; then
+                      echo "✅ Got OpenAI API key"
+                      break
+                    fi
+                    echo "⚠️ OpenAI API key not available yet. Retrying..."
+                    cat /tmp/vault_err.log || true
+                    sleep "$RETRY_INTERVAL"
+                  done
+
+                  echo "🔐 Creating/updating Kubernetes secret openwebui-openai..."
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: openwebui-openai
+                    namespace: ollama
+                  type: Opaque
+                  stringData:
+                    OPENAI_API_KEY: ${OPENAI_API_KEY}
+                  EOF
+
+                  echo "✅ OpenAI secret updated."
+
+              volumeMounts:
+                - name: kubectl-bin
+                  mountPath: /usr/local/bin
+                - name: root-token
+                  mountPath: /vault-token
+                  readOnly: true
+          volumes:
+            - name: kubectl-bin
+              emptyDir: {}
+            - name: root-token
+              secret:
+                secretName: vault-root-token
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openwebui-db-meta-trigger
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+    linkerd.io/inject: disabled
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: openwebui
+      restartPolicy: OnFailure
+      containers:
+        - name: install-meta-trigger
+          image: postgres:16-alpine
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          command: ["sh","-c"]
+          args:
+            - |
+              set -eu
+
+              if [ -z "${DATABASE_URL:-}" ]; then
+                echo "DATABASE_URL is missing"
+                exit 1
+              fi
+
+              MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-600}"
+              WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
+
+              echo "Waiting for openwebui.model to exist..."
+              elapsed=0
+              while true; do
+                table_ready="$(psql "$DATABASE_URL" -tA -c "select 1 from information_schema.tables where table_schema='openwebui' and table_name='model' limit 1" 2>/tmp/psql_err.log || true)"
+                if [ "$table_ready" = "1" ]; then
+                  break
+                fi
+                if [ "$elapsed" -ge "$MAX_WAIT_SECONDS" ]; then
+                  echo "Timed out waiting for openwebui.model"
+                  cat /tmp/psql_err.log || true
+                  exit 1
+                fi
+                echo "openwebui.model not ready yet; retrying..."
+                cat /tmp/psql_err.log || true
+                sleep "$WAIT_INTERVAL"
+                elapsed=$((elapsed + WAIT_INTERVAL))
+              done
+
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+              CREATE OR REPLACE FUNCTION openwebui.normalize_model_meta()
+              RETURNS trigger AS '
+              BEGIN
+                IF NEW.meta IS NULL OR NEW.meta = '''' OR
+                   jsonb_typeof(NULLIF(NEW.meta, '''')::jsonb->''capabilities'') IS DISTINCT FROM ''object'' THEN
+                  NEW.meta := (COALESCE(NULLIF(NEW.meta, '''')::jsonb, ''{}''::jsonb) - ''capabilities''
+                               || ''{"capabilities": {}}''::jsonb)::text;
+                END IF;
+                RETURN NEW;
+              END;
+              ' LANGUAGE plpgsql;
+
+              DROP TRIGGER IF EXISTS normalize_openwebui_model_meta ON openwebui.model;
+              CREATE TRIGGER normalize_openwebui_model_meta
+              BEFORE INSERT OR UPDATE ON openwebui.model
+              FOR EACH ROW EXECUTE FUNCTION openwebui.normalize_model_meta();
+
+              UPDATE openwebui.model
+              SET meta = (COALESCE(NULLIF(meta, '')::jsonb, '{}'::jsonb) - 'capabilities'
+                          || '{"capabilities": {}}'::jsonb)::text
+              WHERE meta IS NULL
+                 OR meta = ''
+                 OR jsonb_typeof(NULLIF(meta, '')::jsonb->'capabilities') IS DISTINCT FROM 'object';
+              SQL
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-url
+                  key: DATABASE_URL
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-openwebui-model-params
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded,HookFailed
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "4"
+    linkerd.io/inject: enabled
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      annotations:
+        config.linkerd.io/proxy-env: "LINKERD2_PROXY_SHUTDOWN_ENDPOINT_ENABLED=true"
+        config.linkerd.io/proxy-shutdown-endpoint-enabled: "true"
+        linkerd.io/inject: enabled
+      labels:
+        app: openwebui-model-sync
+    spec:
+      shareProcessNamespace: true
+      serviceAccountName: openwebui
+      restartPolicy: OnFailure
+      containers:
+        - name: sync-model-params
+          image: postgres:16-alpine
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          command: ["sh","-c"]
+          args:
+            - |
+              set -eu
+
+              cleanup_proxy() {
+                admin_url="http://127.0.0.1:4191"
+                linkerd_pid=""
+                for comm in /proc/[0-9]*/comm; do
+                  name="$(cat "$comm" 2>/dev/null || true)"
+                  case "$name" in
+                    linkerd-proxy|linkerd2-proxy)
+                      linkerd_pid="${comm#/proc/}"
+                      linkerd_pid="${linkerd_pid%/comm}"
+                      break
+                      ;;
+                  esac
+                done
+                if command -v curl >/dev/null 2>&1; then
+                  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X POST "${admin_url}/shutdown" || true)"
+                  if [ -n "${code:-}" ] && [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "000" ]; then
+                    echo "WARN: linkerd shutdown returned HTTP ${code}"
+                  fi
+                else
+                  code=""
+                fi
+                if [ -n "${linkerd_pid}" ]; then
+                  if [ "${code:-}" = "404" ] || [ -z "${code:-}" ]; then
+                    kill -TERM "${linkerd_pid}" >/dev/null 2>&1 || true
+                  fi
+                  for _ in $(seq 1 20); do
+                    if [ ! -e "/proc/${linkerd_pid}" ]; then
+                      return 0
+                    fi
+                    sleep 1
+                  done
+                  echo "WARN: linkerd-proxy still running after shutdown"
+                fi
+              }
+              trap cleanup_proxy EXIT
+
+              KEEP_ALIVE_DEFAULT="-1"
+              DEFAULT_MODEL_ID=""
+              MODEL_OWNER_EMAIL="${MODEL_OWNER_EMAIL:-openwebui-system@local}"
+              MODEL_OWNER_ID="${MODEL_OWNER_ID:-00000000-0000-0000-0000-000000000001}"
+              MODEL_OWNER_NAME="${MODEL_OWNER_NAME:-OpenWebUI System}"
+              MODEL_OWNER_ROLE="${MODEL_OWNER_ROLE:-user}"
+              MODEL_OWNER_PROFILE_IMAGE_URL="${MODEL_OWNER_PROFILE_IMAGE_URL:-}"
+
+              trim() {
+                value="$1"
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+                printf '%s' "$value"
+              }
+
+              get_prop_value() {
+                file="$1"
+                key="$2"
+                [ -f "$file" ] || return 1
+                while IFS= read -r line || [ -n "$line" ]; do
+                  case "$line" in
+                    ""|\#*|\;*) continue ;;
+                  esac
+                  case "$line" in
+                    *=*)
+                      k="${line%%=*}"
+                      v="${line#*=}"
+                      ;;
+                    *:*)
+                      k="${line%%:*}"
+                      v="${line#*:}"
+                      ;;
+                    *)
+                      continue
+                      ;;
+                  esac
+                  k="$(trim "$k")"
+                  if [ "$k" = "$key" ]; then
+                    v="$(trim "$v")"
+                    v="${v%\"}"
+                    v="${v#\"}"
+                    v="${v%\'}"
+                    v="${v#\'}"
+                    printf '%s' "$v"
+                    return 0
+                  fi
+                done < "$file"
+                return 1
+              }
+
+              wait_for_secret_value() {
+                secret_name="$1"
+                key_name="$2"
+                namespace="${POD_NAMESPACE:-ollama}"
+                api="https://kubernetes.default.svc"
+                token_path="/var/run/secrets/kubernetes.io/serviceaccount/token"
+                ca_path="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+                while true; do
+                  token="$(cat "$token_path")"
+                  secret_json="$(curl -fsS --cacert "$ca_path" -H "Authorization: Bearer $token" \
+                    "$api/api/v1/namespaces/${namespace}/secrets/${secret_name}" 2>/tmp/secret_err.log || true)"
+                  if [ -n "$secret_json" ]; then
+                    value_b64="$(echo "$secret_json" | jq -r --arg key "$key_name" '.data[$key] // empty')"
+                    if [ -n "$value_b64" ]; then
+                      printf '%s' "$value_b64" | base64 -d
+                      return 0
+                    fi
+                  fi
+                  echo "Waiting for ${secret_name}/${key_name}..." >&2
+                  sleep 5
+                done
+              }
+
+              DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.env DEFAULT_MODELS || true)"
+              if [ -z "$DEFAULT_MODEL_ID" ]; then
+                DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.properties DEFAULT_MODELS || true)"
+              fi
+              DEFAULT_MODEL_ID="$(trim "$DEFAULT_MODEL_ID")"
+              DEFAULT_MODEL_ID="${DEFAULT_MODEL_ID%%,*}"
+
+              apk add --no-cache curl jq >/dev/null
+
+              if [ -z "${DATABASE_URL:-}" ]; then
+                echo "DATABASE_URL missing; waiting for openwebui-db-url..." >&2
+                DATABASE_URL="$(wait_for_secret_value openwebui-db-url DATABASE_URL)"
+                export DATABASE_URL
+              fi
+
+              MODEL_OWNER_EMAIL_SQL="$(printf "%s" "$MODEL_OWNER_EMAIL" | sed "s/'/''/g")"
+              ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='administrator@suncoast.systems' limit 1" | tr -d '[:space:]')"
+              if [ -z "$ADMIN_ID" ]; then
+                ADMIN_ID="$(psql "$DATABASE_URL" -tA -c "select id from openwebui.user where email='${MODEL_OWNER_EMAIL_SQL}' limit 1" | tr -d '[:space:]')"
+              fi
+
+              if [ -z "$ADMIN_ID" ]; then
+                now_epoch="$(date +%s)"
+                MODEL_OWNER_ID_SQL="$(printf "%s" "$MODEL_OWNER_ID" | sed "s/'/''/g")"
+                MODEL_OWNER_NAME_SQL="$(printf "%s" "$MODEL_OWNER_NAME" | sed "s/'/''/g")"
+                MODEL_OWNER_ROLE_SQL="$(printf "%s" "$MODEL_OWNER_ROLE" | sed "s/'/''/g")"
+                MODEL_OWNER_PROFILE_IMAGE_URL_SQL="$(printf "%s" "$MODEL_OWNER_PROFILE_IMAGE_URL" | sed "s/'/''/g")"
+
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO openwebui.user (id, name, email, role, profile_image_url, created_at, updated_at, last_active_at) VALUES ('${MODEL_OWNER_ID_SQL}', '${MODEL_OWNER_NAME_SQL}', '${MODEL_OWNER_EMAIL_SQL}', '${MODEL_OWNER_ROLE_SQL}', '${MODEL_OWNER_PROFILE_IMAGE_URL_SQL}', ${now_epoch}, ${now_epoch}, ${now_epoch}) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, role = EXCLUDED.role, profile_image_url = EXCLUDED.profile_image_url, updated_at = EXCLUDED.updated_at;"
+                ADMIN_ID="$MODEL_OWNER_ID"
+              fi
+
+              MODELS_JSON=""
+              for _ in 1 2 3 4 5; do
+                if MODELS_JSON="$(curl -fsS "$OLLAMA_TAGS_URL")"; then
+                  break
+                fi
+                sleep 3
+              done
+
+              if [ -z "$MODELS_JSON" ]; then
+                echo "Failed to fetch Ollama model list"
+                exit 1
+              fi
+
+              echo "$MODELS_JSON" | jq -r '.models[].model' | sort -u | while read -r model_id; do
+                if [ -z "$model_id" ]; then
+                  continue
+                fi
+                MODEL_ID_SQL="$(printf "%s" "$model_id" | sed "s/'/''/g")"
+                ADMIN_ID_SQL="$(printf "%s" "$ADMIN_ID" | sed "s/'/''/g")"
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO openwebui.model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, access_control, is_active) VALUES ('${MODEL_ID_SQL}', '${ADMIN_ID_SQL}', NULL, '${MODEL_ID_SQL}', '{\"capabilities\": {}}', '{\"think\": false}', EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint, NULL, true) ON CONFLICT (id) DO UPDATE SET meta = CASE WHEN openwebui.model.meta IS NULL OR openwebui.model.meta = '' THEN '{\"capabilities\": {}}' WHEN jsonb_typeof(openwebui.model.meta::jsonb->'capabilities') = 'object' THEN openwebui.model.meta ELSE (openwebui.model.meta::jsonb || '{\"capabilities\": {}}'::jsonb)::text END, params = CASE WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{\"think\": false}' WHEN (openwebui.model.params::jsonb ? 'think') THEN openwebui.model.params ELSE (openwebui.model.params::jsonb || '{\"think\": false}'::jsonb)::text END, updated_at = EXCLUDED.updated_at;"
+
+                if [ -n "$DEFAULT_MODEL_ID" ] && [ "$model_id" = "$DEFAULT_MODEL_ID" ]; then
+                  KEEP_ALIVE_SQL="$(printf "%s" "$KEEP_ALIVE_DEFAULT" | sed "s/'/''/g")"
+                  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "UPDATE openwebui.model SET params = CASE WHEN openwebui.model.params IS NULL OR openwebui.model.params = '' THEN '{\"keep_alive\": \"${KEEP_ALIVE_SQL}\"}' WHEN (openwebui.model.params::jsonb ? 'keep_alive') THEN openwebui.model.params ELSE (openwebui.model.params::jsonb || '{\"keep_alive\": \"${KEEP_ALIVE_SQL}\"}'::jsonb)::text END WHERE id='${MODEL_ID_SQL}';"
+                fi
+              done
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-url
+                  key: DATABASE_URL
+                  optional: true
+            - name: OLLAMA_TAGS_URL
+              value: "http://ollama.ollama.svc.cluster.local:11434/api/tags"
+          volumeMounts:
+            - name: openwebui-config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: openwebui-config
+          configMap:
+            name: openwebui-config

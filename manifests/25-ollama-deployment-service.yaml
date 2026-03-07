@@ -1,0 +1,255 @@
+# OLLAMA (unchanged functionally)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: ollama
+  labels:
+    app: ollama
+    platform.suncoast.systems/vpa-exclude: "true"
+  annotations:
+    # Runs after initial secrets sync so ArgoCD isn't blocked during the first install.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # Pulling large models in the initContainer can take longer than the default 10m.
+  progressDeadlineSeconds: 7200
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+        platform.suncoast.systems/vpa-exclude: "true"
+    spec:
+      nodeSelector:
+        dedicated: work-node-gpu
+      runtimeClassName: nvidia
+      initContainers:
+        - name: download-models
+          image: ollama/ollama:latest
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              echo "🚀 Starting Ollama server..."
+              ollama serve > /tmp/ollama.log 2>&1 &
+              SERVER_PID=$!
+              apt update && apt install wget -y
+              echo "⏳ Waiting for Ollama server..."
+              i=1; while true; do
+                if wget --spider -q http://localhost:11434/api/tags; then
+                  echo "✅ Ready"; break; fi
+                echo "⏳ Still waiting... ($i)"; i=$((i+1)); sleep 1
+              done
+              MODEL_FILE="/opt/ollama-models/models.txt"
+              echo "📄 Downloading models listed in $MODEL_FILE..."
+              while IFS= read -r model; do
+                [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ] && \
+                  echo "📦 Pulling model: $model" && ollama pull "$model"
+              done < "$MODEL_FILE"
+              echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
+              kill $SERVER_PID; wait $SERVER_PID
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama/models
+            - name: model-list
+              mountPath: /opt/ollama-models
+              readOnly: true
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          securityContext:
+            capabilities: { add: ["SYS_ADMIN"] }
+          env:
+            - { name: OLLAMA_KEEP_ALIVE,      value: "-1" }
+            - { name: OLLAMA_WARMUP_MODEL,    value: "" }
+            - { name: OLLAMA_MAX_LOADED_MODELS, value: "1" }
+            - { name: OLLAMA_NUM_PARALLEL,    value: "2" }
+            - { name: OLLAMA_THREADS,         value: "4" }
+            - { name: OLLAMA_TIMEOUT,         value: "1200" }
+            - { name: OLLAMA_GPU_MEMORY,      value: "15500" }
+            - { name: OLLAMA_FLASH_ATTENTION, value: "true" }
+            - { name: OLLAMA_CONTEXT_LENGTH,  value: "8192" }
+            - { name: OLLAMA_BATCH_SIZE,      value: "512" }
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              echo "Resetting GPU..."
+              apt install wget -y
+              nvidia-smi --gpu-reset -i 0 || echo "GPU reset failed or not allowed"
+              apt update && apt install wget curl -y
+              export OLLAMA_NO_CPU_OFFLOAD=1
+              echo "🚀 Starting Ollama server..."
+              ollama serve > /tmp/ollama.log 2>&1 &
+              SERVER_PID=$!
+
+              trap 'kill "$SERVER_PID"; wait "$SERVER_PID"' TERM INT
+
+              echo "⏳ Waiting for Ollama to be ready..."
+              i=0
+              until wget --spider -q http://localhost:11434/api/tags; do
+                i=$((i + 1))
+                if [ "$i" -gt 120 ]; then
+                  echo "⚠️ Ollama readiness timeout; continuing without warm-up."
+                  break
+                fi
+                sleep 1
+              done
+
+              trim() {
+                value="$1"
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+                printf '%s' "$value"
+              }
+
+              get_prop_value() {
+                file="$1"
+                key="$2"
+                [ -f "$file" ] || return 1
+                while IFS= read -r line || [ -n "$line" ]; do
+                  case "$line" in
+                    ""|\#*|\;*) continue ;;
+                  esac
+                  case "$line" in
+                    *=*)
+                      k="${line%%=*}"
+                      v="${line#*=}"
+                      ;;
+                    *:*)
+                      k="${line%%:*}"
+                      v="${line#*:}"
+                      ;;
+                    *)
+                      continue
+                      ;;
+                  esac
+                  k="$(trim "$k")"
+                  if [ "$k" = "$key" ]; then
+                    v="$(trim "$v")"
+                    v="${v%\"}"
+                    v="${v#\"}"
+                    v="${v%\'}"
+                    v="${v#\'}"
+                    printf '%s' "$v"
+                    return 0
+                  fi
+                done < "$file"
+                return 1
+              }
+
+              DEFAULT_MODEL=""
+              DEFAULT_MODEL="$(get_prop_value /config/openwebui.env DEFAULT_MODELS || true)"
+              if [ -z "$DEFAULT_MODEL" ]; then
+                DEFAULT_MODEL="$(get_prop_value /config/openwebui.properties DEFAULT_MODELS || true)"
+              fi
+              if [ -z "$DEFAULT_MODEL" ]; then
+                DEFAULT_MODEL="${OLLAMA_WARMUP_MODEL:-}"
+              fi
+              DEFAULT_MODEL="$(trim "$DEFAULT_MODEL")"
+              DEFAULT_MODEL="${DEFAULT_MODEL%%,*}"
+              if [ -n "$DEFAULT_MODEL" ]; then
+                if echo "${OLLAMA_KEEP_ALIVE:-5m}" | grep -Eq '^-?[0-9]+$'; then
+                  KEEP_ALIVE_JSON="${OLLAMA_KEEP_ALIVE}"
+                else
+                  KEEP_ALIVE_JSON="\"${OLLAMA_KEEP_ALIVE:-5m}\""
+                fi
+                echo "🔥 Warming up default model: ${DEFAULT_MODEL}"
+                curl -fsS -X POST http://localhost:11434/api/generate \
+                  -H "Content-Type: application/json" \
+                  -d "{\"model\": \"${DEFAULT_MODEL}\", \"prompt\": \" \", \"stream\": false, \"keep_alive\": ${KEEP_ALIVE_JSON}}" >/dev/null || \
+                  echo "⚠️ Warm-up request failed"
+              fi
+
+              wait "$SERVER_PID"
+          ports:
+            - containerPort: 11434
+          resources:
+            requests:
+              cpu: "4"
+              memory: "12Gi"
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: "12Gi"
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama/models
+            - name: model-list
+              mountPath: /opt/ollama-models
+              readOnly: true
+            - name: openwebui-config
+              mountPath: /config
+              readOnly: true
+      restartPolicy: Always
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim: { claimName: ollama-models-pvc }
+        - name: model-list
+          configMap: { name: ollama-models }
+        - name: openwebui-config
+          configMap:
+            name: openwebui-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: ollama
+  annotations:
+    # Gravitee discovery
+    gravitee.io/expose: "true"
+    gravitee.io/context-path: "/ollama"
+    gravitee.io/auth-required: "ollama-token"
+    gravitee.io/approval-required: "admin"
+
+    # Definition metadata (string)
+    gravitee.io/description: "Ollama HTTP API"
+    gravitee.io/version: "latest"
+    gravitee.io/tags: "ollama,ai,llm"
+    gravitee.io/definition-name: "ollama-api"
+    gravitee.io/definition-summary: "Ollama HTTP API"
+    gravitee.io/definition-description: "Ollama model serving API"
+    gravitee.io/definition-version: "latest"
+    gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-context-path: "/ollama"
+    gravitee.io/definition-visibility: "PUBLIC"
+    gravitee.io/definition-state: "STARTED"
+    gravitee.io/definition-lifecycle-state: "PUBLISHED"
+
+    # Listener hints
+    gravitee.io/definition-listener-host: "ollama.ollama.svc.cluster.local"
+    gravitee.io/definition-listener-port: "11434"
+
+    # Definition list fields (comma-separated)
+    gravitee.io/definition-groups: "ai,ml"
+    gravitee.io/definition-tags: "ollama,llm,ai"
+    gravitee.io/definition-labels: "internal,ai"
+    gravitee.io/definition-categories: "ai,ml"
+    gravitee.io/definition-path-mappings: "/ollama/*"
+
+    # Definition JSON fields (raw JSON strings)
+    gravitee.io/definition-metadata: '{"owner":"ai","slack":"#ai"}'
+    gravitee.io/definition-properties: '{"tier":"prod","region":"us-central1","token_exchange_url":"http://openwebui-auth-bridge.ollama.svc.cluster.local:8080/token"}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/api/ps","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"ollama-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://ollama.ollama.svc.cluster.local:11434"},"secondary":false}]}]'
+    gravitee.io/definition-plans: '{"open-access":{"name":"Open access","description":"No auth","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"true"},"keycloak-oauth2":{"name":"Keycloak OAuth2","description":"Keycloak OAuth2 (disabled)","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"false"}}'
+    gravitee.io/definition-flows: '[]'
+    gravitee.io/definition-response-templates: '{}'
+    gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
+
+    # Optional overrides (leave empty to let sync controller generate)
+    gravitee.io/definition-entrypoints: '[]'
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      protocol: TCP
+      port: 11434
+      targetPort: 11434
+  clusterIP: None
