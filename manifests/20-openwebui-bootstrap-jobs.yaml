@@ -174,6 +174,21 @@ spec:
                 policies="openwebui-login" \
                 ttl="48h"
 
+              echo "📜 Writing policy for ollama async ExternalSecret..."
+              vault policy write externalsecrets-ollama-async - <<'EOF'
+              path "secret/data/kafka-scram-user-ollama-async" { capabilities = ["read"] }
+              path "secret/metadata/kafka-scram-user-ollama-async" { capabilities = ["read", "list"] }
+              path "secret/data/kafka-scram-user-ollama-async-password" { capabilities = ["read"] }
+              path "secret/metadata/kafka-scram-user-ollama-async-password" { capabilities = ["read", "list"] }
+              EOF
+
+              echo "🔗 Binding K8s SA 'ollama-async-external-secrets' in ns 'ollama' ..."
+              vault write auth/kubernetes/role/externalsecrets-ollama-async \
+                bound_service_account_names="ollama-async-external-secrets" \
+                bound_service_account_namespaces="ollama" \
+                policies="externalsecrets-ollama-async" \
+                ttl="48h"
+
               echo "🧪 Verifying static creds issuance..."
               if CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log)"; then
                 echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null \

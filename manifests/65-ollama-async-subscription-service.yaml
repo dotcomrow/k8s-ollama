@@ -1,0 +1,112 @@
+# Ollama async subscription worker:
+# - Consumes async requests from Kafka
+# - Calls Ollama/OpenAI-compatible endpoint
+# - Publishes async responses to Kafka
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ollama-async-subscription-service
+  namespace: ollama
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-async-subscription-service
+  namespace: ollama
+spec:
+  selector:
+    app: ollama-async-subscription-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-async-subscription-service
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-async-subscription-service
+  template:
+    metadata:
+      labels:
+        app: ollama-async-subscription-service
+      annotations:
+        linkerd.io/inject: "disabled"
+        reloader.stakater.com/auto: "true"
+    spec:
+      serviceAccountName: ollama-async-subscription-service
+      containers:
+        - name: app
+          image: ghcr.io/dotcomrow/ollama-async-subscription-service:sha-63159cd
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.kafka.svc.internal.lan:9092"
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: "SASL_PLAINTEXT"
+            - name: KAFKA_SASL_MECHANISM
+              value: "SCRAM-SHA-256"
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: ollama-async-subscription-service
+                  key: KAFKA_SASL_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ollama-async-subscription-service
+                  key: KAFKA_SASL_PASSWORD
+            - name: KAFKA_REQUEST_CONSUMER_GROUP
+              value: "graphql-async-workers"
+            - name: ASYNC_REQUEST_TOPIC
+              value: "graphql.async.requests.v1"
+            - name: ASYNC_RESPONSE_TOPIC
+              value: "graphql.async.responses.v1"
+            - name: LLM_API_BASE_URL
+              value: "http://ollama.ollama.svc.cluster.local:11434/v1"
+            - name: LLM_DEFAULT_MODEL
+              value: "deepseek-r1:14b"
+            - name: REQUEST_HANDLER_NAMES
+              value: "ai-service,ollama,ollama-async-subscription-service"
+            - name: WORKER_POLL_SECONDS
+              value: "1"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
