@@ -45,7 +45,7 @@ spec:
       serviceAccountName: ollama-async-subscription-service
       containers:
         - name: app
-          image: ghcr.io/dotcomrow/ollama-async-subscription-service:sha-4683f2b
+          image: ghcr.io/dotcomrow/ollama-async-subscription-service:sha-ab88123
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -70,10 +70,14 @@ spec:
                   key: KAFKA_SASL_PASSWORD
             - name: KAFKA_REQUEST_CONSUMER_GROUP
               value: "graphql-async-workers"
+            - name: KAFKA_AUTO_OFFSET_RESET
+              value: "latest"
             - name: ASYNC_REQUEST_TOPIC
               value: "graphql.async.requests.v1"
             - name: ASYNC_RESPONSE_TOPIC
               value: "graphql.async.responses.v1"
+            - name: ASYNC_RESPONSE_EXPIRES_SECONDS
+              value: "3600"
             - name: LLM_API_BASE_URL
               value: "http://ollama.ollama.svc.cluster.local:11434/v1"
             - name: LLM_DEFAULT_MODEL
