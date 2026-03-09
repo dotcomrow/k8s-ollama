@@ -39,7 +39,7 @@ spec:
       labels:
         app: ollama-async-subscription-service
       annotations:
-        linkerd.io/inject: "disabled"
+        linkerd.io/inject: "enabled"
         reloader.stakater.com/auto: "true"
     spec:
       serviceAccountName: ollama-async-subscription-service
