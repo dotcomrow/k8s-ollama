@@ -26,7 +26,7 @@ spec:
         platform.suncoast.systems/vpa-exclude: "true"
     spec:
       nodeSelector:
-        dedicated: work-node-gpu
+        suncoast.systems/gpu: l4
       runtimeClassName: nvidia
       initContainers:
         - name: download-models
