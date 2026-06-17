@@ -40,6 +40,7 @@ spec:
               import secrets
               import sys
               import traceback
+              import time
               from pathlib import Path
               from urllib.parse import unquote, urlparse
 
@@ -71,12 +72,7 @@ spec:
                   return os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
 
               def run_migrations(database_url: str) -> None:
-                  # 1) Peewee migrations (Open WebUI internal migrations)
-                  from open_webui.internal.db import handle_peewee_migration  # type: ignore
-
-                  handle_peewee_migration(database_url)
-
-                  # 2) Alembic migrations (main schema)
+                  # Primary schema migrations only for current image versions.
                   from alembic import command  # type: ignore
                   from alembic.config import Config  # type: ignore
                   from open_webui.env import OPEN_WEBUI_DIR  # type: ignore
@@ -84,6 +80,52 @@ spec:
                   alembic_cfg = Config(OPEN_WEBUI_DIR / "alembic.ini")
                   alembic_cfg.set_main_option("script_location", str(OPEN_WEBUI_DIR / "migrations"))
                   command.upgrade(alembic_cfg, "head")
+
+              def is_retryable_db_error(exc: Exception) -> bool:
+                  message = str(exc).lower()
+                  if "could not serialize access due to concurrent update" in message:
+                      return True
+                  if "catalog version mismatch" in message:
+                      return True
+
+                  orig = getattr(exc, "orig", None)
+                  if getattr(orig, "pgcode", None) == "40001":
+                      return True
+                  return False
+
+              def run_migrations_with_lock(database_url: str) -> None:
+                  max_retries = int(os.environ.get("OPENWEBUI_DB_MIGRATION_MAX_RETRIES", "8"))
+                  default_backoff_seconds = float(os.environ.get("OPENWEBUI_DB_MIGRATION_BACKOFF_SECONDS", "0.75"))
+
+                  parsed = urlparse(database_url)
+                  scheme = (parsed.scheme or "").lower()
+                  if not scheme.startswith("postgresql"):
+                      run_migrations(database_url)
+                      return
+
+                  from sqlalchemy import create_engine, text  # type: ignore
+
+                  engine = create_engine(database_url, pool_pre_ping=True)
+                  lock_conn = engine.connect()
+                  try:
+                      # Hold a process-level advisory lock so only one pod mutates schema at once.
+                      lock_conn.execute(text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": 2026061710})
+                      for attempt in range(1, max_retries + 1):
+                          try:
+                              run_migrations(database_url)
+                              return
+                          except Exception as exc:
+                              if not is_retryable_db_error(exc) or attempt >= max_retries:
+                                  raise
+                              delay = min(5.0, default_backoff_seconds * (2 ** (attempt - 1)))
+                              print(
+                                  f"Migration conflict detected, retrying ({attempt}/{max_retries}) after {delay:.1f}s"
+                              )
+                              print(exc, file=sys.stderr)
+                              time.sleep(delay)
+                  finally:
+                      lock_conn.close()
+                      engine.dispose()
 
               def reset_sqlite(database_url: str) -> None:
                   from open_webui.env import DATA_DIR  # type: ignore
@@ -229,7 +271,7 @@ spec:
               print(f"Open WebUI DB auto-heal init starting (scheme={scheme}, autoheal={AUTOHEAL})")
 
               try:
-                  run_migrations(database_url)
+                  run_migrations_with_lock(database_url)
                   print("DB migrations succeeded.")
               except Exception as exc:
                   print(f"DB migrations failed: {exc!r}", file=sys.stderr)
@@ -241,7 +283,7 @@ spec:
                   print("Attempting DB reset (data loss) and re-migrate...")
                   try:
                       reset_database(database_url)
-                      run_migrations(database_url)
+                      run_migrations_with_lock(database_url)
                       print("DB reset + migrations succeeded.")
                   except Exception as exc2:
                       print(f"DB reset attempt failed: {exc2!r}", file=sys.stderr)
@@ -252,7 +294,7 @@ spec:
             - name: OPENWEBUI_DB_AUTOHEAL
               value: "true"
             - name: OPENWEBUI_DB_RESET_ON_MIGRATION_FAILURE
-              value: "true"
+              value: "false"
             - name: OPENWEBUI_DB_RESET_SCHEMA
               value: "openwebui"
             - name: OPENWEBUI_DB_RESET_EXTRA_SCHEMAS
