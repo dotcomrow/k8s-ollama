@@ -180,6 +180,8 @@ spec:
               path "secret/metadata/kafka-scram-user-ollama-async" { capabilities = ["read", "list"] }
               path "secret/data/kafka-scram-user-ollama-async-password" { capabilities = ["read"] }
               path "secret/metadata/kafka-scram-user-ollama-async-password" { capabilities = ["read", "list"] }
+              path "secret/data/openwebui-cms-translation-token" { capabilities = ["read"] }
+              path "secret/metadata/openwebui-cms-translation-token" { capabilities = ["read", "list"] }
               EOF
 
               echo "🔗 Binding K8s SA 'ollama-async-external-secrets' in ns 'ollama' ..."

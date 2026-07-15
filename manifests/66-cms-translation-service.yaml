@@ -1,0 +1,268 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cms-translation-service-openwebui
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: vault-store-ollama
+  target:
+    name: cms-translation-service
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+  data:
+    - secretKey: OPENWEBUI_API_TOKEN
+      remoteRef:
+        key: openwebui-cms-translation-token
+        property: value
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cms-translation-service
+  namespace: ollama
+data:
+  requirements.txt: |
+    fastapi==0.115.5
+    httpx==0.27.2
+    uvicorn==0.30.6
+  app.py: |
+    import json
+    import os
+    import re
+    from typing import Any, Dict, Optional
+
+    import httpx
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel, Field
+
+    APP_VERSION = "1.0.0"
+    OPENWEBUI_BASE_URL = os.environ.get("OPENWEBUI_BASE_URL", "http://open-webui.ollama.svc.cluster.local:80").rstrip("/")
+    OPENWEBUI_CHAT_COMPLETIONS_PATH = os.environ.get("OPENWEBUI_CHAT_COMPLETIONS_PATH", "/api/chat/completions")
+    OPENWEBUI_API_TOKEN = os.environ.get("OPENWEBUI_API_TOKEN", "").strip()
+    OPENWEBUI_MODEL = os.environ.get("OPENWEBUI_MODEL", "deepseek-r1:14b")
+    REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "180"))
+    PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v1")
+    LANGUAGE_PATTERN = re.compile(r"^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8}){0,8}$")
+
+    app = FastAPI(title="CMS Translation Service", version=APP_VERSION)
+
+    class TranslateRequest(BaseModel):
+      source_language: str = "en"
+      target_language: str
+      content_item_id: Optional[str] = None
+      source_content_version: Optional[int] = None
+      source_hash: Optional[str] = None
+      content_json: Dict[str, Any] = Field(default_factory=dict)
+
+    class TranslateResponse(BaseModel):
+      target_language: str
+      source_content_version: Optional[int] = None
+      source_hash: Optional[str] = None
+      content_json: Dict[str, Any]
+      model: str
+      prompt_version: str
+      translated_by: str = "cms-translation-service"
+
+    def normalize_language(value: str) -> str:
+      candidate = (value or "").strip().replace("_", "-")
+      if not candidate or not LANGUAGE_PATTERN.match(candidate):
+        return "en"
+      return candidate
+
+    def strip_json_fence(value: str) -> str:
+      text = value.strip()
+      if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+      return text.strip()
+
+    def extract_openwebui_text(payload: Dict[str, Any]) -> str:
+      choices = payload.get("choices")
+      if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+          return message["content"]
+        if isinstance(choices[0].get("text"), str):
+          return choices[0]["text"]
+      if isinstance(payload.get("content"), str):
+        return payload["content"]
+      raise HTTPException(status_code=502, detail="OpenWebUI response did not contain model text.")
+
+    async def call_openwebui(request: TranslateRequest) -> Dict[str, Any]:
+      source_language = normalize_language(request.source_language)
+      target_language = normalize_language(request.target_language)
+      system_prompt = (
+        "Translate CMS JSON content from the source language to the target language. "
+        "Return only a valid JSON object. Preserve all object keys, array order, value types, "
+        "URLs, IDs, code blocks, template tokens, and HTML tags. Translate human-readable text values only."
+      )
+      user_prompt = json.dumps(
+        {
+          "source_language": source_language,
+          "target_language": target_language,
+          "content_json": request.content_json,
+        },
+        ensure_ascii=False,
+      )
+      headers = {"Accept": "application/json", "Content-Type": "application/json"}
+      if OPENWEBUI_API_TOKEN:
+        headers["Authorization"] = f"Bearer {OPENWEBUI_API_TOKEN}"
+      body = {
+        "model": OPENWEBUI_MODEL,
+        "messages": [
+          {"role": "system", "content": system_prompt},
+          {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0,
+      }
+      async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+          f"{OPENWEBUI_BASE_URL}{OPENWEBUI_CHAT_COMPLETIONS_PATH}",
+          headers=headers,
+          json=body,
+        )
+        response.raise_for_status()
+      text = strip_json_fence(extract_openwebui_text(response.json()))
+      try:
+        translated = json.loads(text)
+      except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"Model returned invalid JSON: {exc}") from exc
+      if not isinstance(translated, dict):
+        raise HTTPException(status_code=502, detail="Model returned JSON but not an object.")
+      return translated
+
+    @app.get("/healthz")
+    async def healthz() -> Dict[str, Any]:
+      return {
+        "ok": True,
+        "version": APP_VERSION,
+        "openwebui_base_url": OPENWEBUI_BASE_URL,
+        "model": OPENWEBUI_MODEL,
+        "has_openwebui_token": bool(OPENWEBUI_API_TOKEN),
+      }
+
+    @app.post("/translate-content-json", response_model=TranslateResponse)
+    async def translate_content_json(request: TranslateRequest) -> TranslateResponse:
+      target_language = normalize_language(request.target_language)
+      if target_language.lower() == normalize_language(request.source_language).lower():
+        translated = request.content_json
+      else:
+        translated = await call_openwebui(request)
+      return TranslateResponse(
+        target_language=target_language,
+        source_content_version=request.source_content_version,
+        source_hash=request.source_hash,
+        content_json=translated,
+        model=OPENWEBUI_MODEL,
+        prompt_version=PROMPT_VERSION,
+      )
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cms-translation-service
+  namespace: ollama
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cms-translation-service
+  namespace: ollama
+spec:
+  selector:
+    app: cms-translation-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cms-translation-service
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cms-translation-service
+  template:
+    metadata:
+      labels:
+        app: cms-translation-service
+      annotations:
+        linkerd.io/inject: "enabled"
+        reloader.stakater.com/auto: "true"
+    spec:
+      serviceAccountName: cms-translation-service
+      containers:
+        - name: app
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: OPENWEBUI_BASE_URL
+              value: "http://open-webui.ollama.svc.cluster.local:80"
+            - name: OPENWEBUI_CHAT_COMPLETIONS_PATH
+              value: "/api/chat/completions"
+            - name: OPENWEBUI_MODEL
+              value: "deepseek-r1:14b"
+            - name: PROMPT_VERSION
+              value: "cms-json-translation-v1"
+            - name: REQUEST_TIMEOUT_SECONDS
+              value: "180"
+            - name: OPENWEBUI_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cms-translation-service
+                  key: OPENWEBUI_API_TOKEN
+                  optional: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              pip install --no-cache-dir -r /app/requirements.txt >/dev/null
+              python -m uvicorn app:app --app-dir /app --host 0.0.0.0 --port 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          configMap:
+            name: cms-translation-service

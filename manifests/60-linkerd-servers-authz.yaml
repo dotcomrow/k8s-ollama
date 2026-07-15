@@ -49,6 +49,34 @@ spec:
 apiVersion: policy.linkerd.io/v1beta1
 kind: Server
 metadata:
+  name: cms-translation-service
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: cms-translation-service
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: cms-translation-service-from-nifi
+  namespace: ollama
+spec:
+  server:
+    name: cms-translation-service
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: default
+          namespace: kafka
+        - name: nifi
+          namespace: kafka
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
   name: ollama
   namespace: ollama
 spec:
