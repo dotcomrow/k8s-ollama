@@ -38,7 +38,7 @@ spec:
                   RETRY_INTERVAL=5
                   echo "🔧 Installing tools..."
                   while true; do
-                    apt-get update && apt-get install -y curl unzip jq postgresql-client && break
+                    apt-get update && apt-get install -y curl unzip jq openssl postgresql-client && break
                     echo "⚠️ apt-get failed. Retrying in ${RETRY_INTERVAL}s..."; sleep "$RETRY_INTERVAL"
                   done
                   echo "📌 Installing Vault CLI..."
@@ -120,6 +120,84 @@ spec:
                   EOF
 
                   echo "✅ OIDC secrets updated."
+
+                  echo "🔐 Ensuring CMS translation OpenWebUI token..."
+                  CMS_TRANSLATION_USER_ID="${CMS_TRANSLATION_USER_ID:-00000000-0000-0000-0000-000000000042}"
+                  CMS_TRANSLATION_EMAIL="${CMS_TRANSLATION_EMAIL:-cms-translation-service@local}"
+                  CMS_TRANSLATION_NAME="${CMS_TRANSLATION_NAME:-CMS Translation Service}"
+                  CMS_TRANSLATION_TOKEN="$(vault kv get -field=value secret/openwebui-cms-translation-token 2>/tmp/vault_err.log || true)"
+                  case "$CMS_TRANSLATION_TOKEN" in
+                    *.*.*)
+                      echo "✅ Reusing existing CMS translation WebUI token from Vault"
+                      ;;
+                    *)
+                      base64url() {
+                        openssl base64 -A | tr '+/' '-_' | tr -d '='
+                      }
+                      CMS_TRANSLATION_JTI="$(openssl rand -hex 16)"
+                      CMS_TRANSLATION_IAT="$(date +%s)"
+                      JWT_HEADER="$(printf '%s' '{"alg":"HS256","typ":"JWT"}' | base64url)"
+                      JWT_PAYLOAD="$(
+                        jq -nc \
+                          --arg id "$CMS_TRANSLATION_USER_ID" \
+                          --arg jti "$CMS_TRANSLATION_JTI" \
+                          --argjson iat "$CMS_TRANSLATION_IAT" \
+                          '{id:$id,jti:$jti,iat:$iat}' | base64url
+                      )"
+                      JWT_SIGNATURE="$(printf '%s' "${JWT_HEADER}.${JWT_PAYLOAD}" | openssl dgst -sha256 -hmac "$WEBUI_SECRET_KEY" -binary | base64url)"
+                      CMS_TRANSLATION_TOKEN="${JWT_HEADER}.${JWT_PAYLOAD}.${JWT_SIGNATURE}"
+                      echo "✅ Generated CMS translation WebUI token"
+                      ;;
+                  esac
+
+                  if [ -z "$CMS_TRANSLATION_TOKEN" ]; then
+                    echo "❌ CMS translation token generation failed"
+                    exit 1
+                  fi
+
+                  CMS_TRANSLATION_USER_ID_SQL="$(printf "%s" "$CMS_TRANSLATION_USER_ID" | sed "s/'/''/g")"
+                  CMS_TRANSLATION_EMAIL_SQL="$(printf "%s" "$CMS_TRANSLATION_EMAIL" | sed "s/'/''/g")"
+                  CMS_TRANSLATION_NAME_SQL="$(printf "%s" "$CMS_TRANSLATION_NAME" | sed "s/'/''/g")"
+
+                  psql "$DB_URL" -v ON_ERROR_STOP=1 <<EOSQL
+                  INSERT INTO openwebui."user" (
+                    id, email, username, role, name, profile_image_url,
+                    oauth, last_active_at, created_at, updated_at
+                  ) VALUES (
+                    '${CMS_TRANSLATION_USER_ID_SQL}',
+                    '${CMS_TRANSLATION_EMAIL_SQL}',
+                    'cms-translation-service',
+                    'admin',
+                    '${CMS_TRANSLATION_NAME_SQL}',
+                    '/user.png',
+                    '{"service_account": true}',
+                    EXTRACT(EPOCH FROM NOW())::bigint,
+                    EXTRACT(EPOCH FROM NOW())::bigint,
+                    EXTRACT(EPOCH FROM NOW())::bigint
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    email = EXCLUDED.email,
+                    username = EXCLUDED.username,
+                    role = EXCLUDED.role,
+                    name = EXCLUDED.name,
+                    profile_image_url = EXCLUDED.profile_image_url,
+                    oauth = EXCLUDED.oauth,
+                    updated_at = EXTRACT(EPOCH FROM NOW())::bigint;
+
+                  INSERT INTO openwebui.auth (id, email, password, active)
+                  VALUES (
+                    '${CMS_TRANSLATION_USER_ID_SQL}',
+                    '${CMS_TRANSLATION_EMAIL_SQL}',
+                    '',
+                    true
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    email = EXCLUDED.email,
+                    active = true;
+                  EOSQL
+
+                  vault kv put secret/openwebui-cms-translation-token value="$CMS_TRANSLATION_TOKEN" >/dev/null
+                  echo "✅ CMS translation WebUI token reconciled."
 
                   while true; do
                     OPENAI_API_KEY=$(vault kv get -field=value secret/open_ai_key 2>/tmp/vault_err.log || true)
