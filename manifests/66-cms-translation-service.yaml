@@ -48,7 +48,7 @@ data:
     OPENWEBUI_API_TOKEN = os.environ.get("OPENWEBUI_API_TOKEN", "").strip()
     OPENWEBUI_MODEL = os.environ.get("OPENWEBUI_MODEL", "deepseek-r1:14b")
     REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "180"))
-    PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v1")
+    PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v2")
     LANGUAGE_PATTERN = re.compile(r"^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8}){0,8}$")
 
     app = FastAPI(title="CMS Translation Service", version=APP_VERSION)
@@ -142,8 +142,9 @@ data:
     async def call_openwebui(source_language: str, target_language: str, content_json: Dict[str, Any]) -> Dict[str, Any]:
       system_prompt = (
         "Translate CMS JSON content from the source language to the target language. "
-        "Return only a valid JSON object. Preserve all object keys, array order, value types, "
-        "URLs, IDs, code blocks, template tokens, and HTML tags. Translate human-readable text values only."
+        "Return only the translated content_json object as valid JSON, not the full request envelope. "
+        "Preserve all object keys, array order, value types, URLs, IDs, code blocks, template tokens, "
+        "and HTML tags. Translate human-readable text values only."
       )
       user_prompt = json.dumps(
         {
@@ -180,6 +181,13 @@ data:
         raise HTTPException(status_code=502, detail="Model returned JSON but not an object.")
       return translated
 
+    def normalize_translated_content(translated: Dict[str, Any]) -> Dict[str, Any]:
+      nested = translated.get("content_json")
+      envelope_keys = {"content_json", "source_language", "target_language", "language_code", "target_language_code"}
+      if isinstance(nested, dict) and set(translated.keys()).issubset(envelope_keys):
+        return nested
+      return translated
+
     @app.get("/healthz")
     async def healthz() -> Dict[str, Any]:
       return {
@@ -198,6 +206,7 @@ data:
         translated = context["content_json"]
       else:
         translated = await call_openwebui(context["source_language"], target_language, context["content_json"])
+      translated = normalize_translated_content(translated)
       return TranslateResponse(
         target_language=target_language,
         language_code=target_language,
