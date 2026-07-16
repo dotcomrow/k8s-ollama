@@ -55,14 +55,20 @@ data:
 
     class TranslateRequest(BaseModel):
       source_language: str = "en"
-      target_language: str
+      target_language: Optional[str] = None
+      requested_language_code: Optional[str] = None
+      source_language_code: Optional[str] = None
       content_item_id: Optional[str] = None
       source_content_version: Optional[int] = None
       source_hash: Optional[str] = None
+      content_item: Optional[Dict[str, Any]] = None
       content_json: Dict[str, Any] = Field(default_factory=dict)
 
     class TranslateResponse(BaseModel):
       target_language: str
+      language_code: str
+      status: str = "published"
+      content_item_id: Optional[str] = None
       source_content_version: Optional[int] = None
       source_hash: Optional[str] = None
       content_json: Dict[str, Any]
@@ -70,11 +76,49 @@ data:
       prompt_version: str
       translated_by: str = "cms-translation-service"
 
-    def normalize_language(value: str) -> str:
+    def normalize_language(value: Optional[str]) -> str:
       candidate = (value or "").strip().replace("_", "-")
       if not candidate or not LANGUAGE_PATTERN.match(candidate):
         return "en"
       return candidate
+
+    def require_language(value: Optional[str], field_name: str) -> str:
+      candidate = (value or "").strip().replace("_", "-")
+      if not candidate or not LANGUAGE_PATTERN.match(candidate):
+        raise HTTPException(status_code=422, detail=f"{field_name} must be a valid language code.")
+      return candidate
+
+    def resolve_translation_context(request: TranslateRequest) -> Dict[str, Any]:
+      content_item = request.content_item if isinstance(request.content_item, dict) else {}
+      content_json = request.content_json
+      if not content_json and isinstance(content_item.get("content_json"), dict):
+        content_json = content_item["content_json"]
+      if not isinstance(content_json, dict):
+        raise HTTPException(status_code=422, detail="content_json must be a JSON object.")
+
+      source_content_version = request.source_content_version
+      if source_content_version is None and content_item.get("content_version") is not None:
+        try:
+          source_content_version = int(content_item["content_version"])
+        except (TypeError, ValueError) as exc:
+          raise HTTPException(status_code=422, detail="content_item.content_version must be an integer.") from exc
+
+      content_item_id = request.content_item_id
+      if not content_item_id and content_item.get("id") is not None:
+        content_item_id = str(content_item["id"])
+
+      source_hash = request.source_hash
+      if not source_hash and content_item.get("source_hash") is not None:
+        source_hash = str(content_item["source_hash"])
+
+      return {
+        "source_language": normalize_language(request.source_language_code or request.source_language),
+        "target_language": require_language(request.target_language or request.requested_language_code, "target_language"),
+        "content_item_id": content_item_id,
+        "source_content_version": source_content_version,
+        "source_hash": source_hash,
+        "content_json": content_json,
+      }
 
     def strip_json_fence(value: str) -> str:
       text = value.strip()
@@ -95,9 +139,7 @@ data:
         return payload["content"]
       raise HTTPException(status_code=502, detail="OpenWebUI response did not contain model text.")
 
-    async def call_openwebui(request: TranslateRequest) -> Dict[str, Any]:
-      source_language = normalize_language(request.source_language)
-      target_language = normalize_language(request.target_language)
+    async def call_openwebui(source_language: str, target_language: str, content_json: Dict[str, Any]) -> Dict[str, Any]:
       system_prompt = (
         "Translate CMS JSON content from the source language to the target language. "
         "Return only a valid JSON object. Preserve all object keys, array order, value types, "
@@ -107,7 +149,7 @@ data:
         {
           "source_language": source_language,
           "target_language": target_language,
-          "content_json": request.content_json,
+          "content_json": content_json,
         },
         ensure_ascii=False,
       )
@@ -150,15 +192,18 @@ data:
 
     @app.post("/translate-content-json", response_model=TranslateResponse)
     async def translate_content_json(request: TranslateRequest) -> TranslateResponse:
-      target_language = normalize_language(request.target_language)
-      if target_language.lower() == normalize_language(request.source_language).lower():
-        translated = request.content_json
+      context = resolve_translation_context(request)
+      target_language = context["target_language"]
+      if target_language.lower() == context["source_language"].lower():
+        translated = context["content_json"]
       else:
-        translated = await call_openwebui(request)
+        translated = await call_openwebui(context["source_language"], target_language, context["content_json"])
       return TranslateResponse(
         target_language=target_language,
-        source_content_version=request.source_content_version,
-        source_hash=request.source_hash,
+        language_code=target_language,
+        content_item_id=context["content_item_id"],
+        source_content_version=context["source_content_version"],
+        source_hash=context["source_hash"],
         content_json=translated,
         model=OPENWEBUI_MODEL,
         prompt_version=PROMPT_VERSION,
