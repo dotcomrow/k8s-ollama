@@ -275,7 +275,7 @@ spec:
             - name: OPENWEBUI_MODEL
               value: "deepseek-r1:14b"
             - name: PROMPT_VERSION
-              value: "cms-json-translation-v1"
+              value: "cms-json-translation-v2"
             - name: REQUEST_TIMEOUT_SECONDS
               value: "180"
             - name: OPENWEBUI_API_TOKEN
