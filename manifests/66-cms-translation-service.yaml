@@ -33,22 +33,23 @@ data:
     httpx==0.27.2
     uvicorn==0.30.6
   app.py: |
+    import copy
     import json
     import os
     import re
-    from typing import Any, Dict, Optional
+    from typing import Any, Dict, List, Optional
 
     import httpx
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel, Field
 
-    APP_VERSION = "1.1.0"
+    APP_VERSION = "1.2.0"
     OPENWEBUI_BASE_URL = os.environ.get("OPENWEBUI_BASE_URL", "http://open-webui.ollama.svc.cluster.local:80").rstrip("/")
     OPENWEBUI_CHAT_COMPLETIONS_PATH = os.environ.get("OPENWEBUI_CHAT_COMPLETIONS_PATH", "/api/chat/completions")
     OPENWEBUI_API_TOKEN = os.environ.get("OPENWEBUI_API_TOKEN", "").strip()
     OPENWEBUI_MODEL = os.environ.get("OPENWEBUI_MODEL", "deepseek-r1:14b")
     REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "180"))
-    PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v2")
+    PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v3")
     LANGUAGE_PATTERN = re.compile(r"^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8}){0,8}$")
     MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
 
@@ -64,6 +65,7 @@ data:
       source_hash: Optional[str] = None
       model: Optional[str] = None
       translation_model: Optional[str] = None
+      translation_policy: Optional[Dict[str, Any]] = None
       content_item: Optional[Dict[str, Any]] = None
       content_json: Dict[str, Any] = Field(default_factory=dict)
 
@@ -85,6 +87,45 @@ data:
         return "en"
       return candidate
 
+    def normalize_optional_language(value: Any) -> Optional[str]:
+      candidate = str(value or "").strip().replace("_", "-")
+      if not candidate or candidate == "*" or not LANGUAGE_PATTERN.match(candidate):
+        return None
+      return candidate
+
+    def normalize_language_list(value: Any) -> List[str]:
+      if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+          raw_items: List[Any] = []
+        else:
+          try:
+            parsed = json.loads(stripped)
+          except json.JSONDecodeError:
+            parsed = re.split(r"[,\s]+", stripped)
+          raw_items = parsed if isinstance(parsed, list) else [parsed]
+      elif isinstance(value, list):
+        raw_items = value
+      else:
+        raw_items = []
+      languages: List[str] = []
+      for raw_item in raw_items:
+        language = normalize_optional_language(raw_item)
+        if language and language not in languages:
+          languages.append(language)
+      return languages
+
+    def language_is_configured(configured_languages: Any, requested_language: str) -> bool:
+      requested = normalize_optional_language(requested_language)
+      if not requested:
+        return False
+      requested_lower = requested.lower()
+      for configured in normalize_language_list(configured_languages):
+        configured_lower = configured.lower()
+        if requested_lower == configured_lower or requested_lower.startswith(f"{configured_lower}-"):
+          return True
+      return False
+
     def require_language(value: Optional[str], field_name: str) -> str:
       candidate = (value or "").strip().replace("_", "-")
       if not candidate or not LANGUAGE_PATTERN.match(candidate):
@@ -98,6 +139,176 @@ data:
       if not MODEL_PATTERN.match(candidate):
         raise HTTPException(status_code=422, detail="model must be a valid Ollama/OpenWebUI model id.")
       return candidate
+
+    def coerce_json_object_array(value: Any) -> List[Dict[str, Any]]:
+      if isinstance(value, str):
+        try:
+          value = json.loads(value)
+        except json.JSONDecodeError:
+          return []
+      if not isinstance(value, list):
+        return []
+      return [item for item in value if isinstance(item, dict)]
+
+    def parse_json_path(path: Any) -> Optional[List[Any]]:
+      text = str(path or "").strip()
+      if not text:
+        return None
+      if text == "$":
+        return []
+      if not text.startswith("$"):
+        return None
+      segments: List[Any] = []
+      index = 1
+      while index < len(text):
+        char = text[index]
+        if char == ".":
+          index += 1
+          start = index
+          while index < len(text) and text[index] not in ".[":
+            index += 1
+          key = text[start:index].strip()
+          if not key:
+            return None
+          segments.append(key)
+          continue
+        if char == "[":
+          close_index = text.find("]", index + 1)
+          if close_index < 0:
+            return None
+          token = text[index + 1:close_index].strip()
+          if token.isdigit():
+            segments.append(int(token))
+          elif (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
+            key = token[1:-1]
+            if not key:
+              return None
+            segments.append(key)
+          else:
+            return None
+          index = close_index + 1
+          continue
+        return None
+      return segments
+
+    def get_json_path_value(root: Any, segments: List[Any]) -> tuple[bool, Any]:
+      current = root
+      for segment in segments:
+        if isinstance(segment, int):
+          if not isinstance(current, list) or segment < 0 or segment >= len(current):
+            return False, None
+          current = current[segment]
+        else:
+          if not isinstance(current, dict) or segment not in current:
+            return False, None
+          current = current[segment]
+      return True, current
+
+    def set_json_path_value(root: Any, segments: List[Any], value: Any) -> bool:
+      if not segments:
+        return False
+      current = root
+      for segment in segments[:-1]:
+        if isinstance(segment, int):
+          if not isinstance(current, list) or segment < 0 or segment >= len(current):
+            return False
+          current = current[segment]
+        else:
+          if not isinstance(current, dict) or segment not in current:
+            return False
+          current = current[segment]
+      last = segments[-1]
+      if isinstance(last, int):
+        if not isinstance(current, list) or last < 0 or last >= len(current):
+          return False
+        current[last] = value
+        return True
+      if not isinstance(current, dict):
+        return False
+      current[last] = value
+      return True
+
+    def normalize_translation_rules(value: Any) -> List[Dict[str, Any]]:
+      rules: List[Dict[str, Any]] = []
+      for raw_rule in coerce_json_object_array(value):
+        path = str(raw_rule.get("path") or raw_rule.get("json_path") or "").strip()
+        segments = parse_json_path(path)
+        if segments is None:
+          continue
+        translation_enabled = raw_rule.get("translation_enabled")
+        if not isinstance(translation_enabled, bool):
+          translation_enabled = raw_rule.get("translate")
+        rules.append({
+          "path": path,
+          "segments": segments,
+          "translation_enabled": translation_enabled if isinstance(translation_enabled, bool) else None,
+          "excluded_languages": normalize_language_list(
+            raw_rule.get("excluded_languages")
+            or raw_rule.get("exclude_languages")
+            or raw_rule.get("do_not_translate_languages")
+          ),
+        })
+      return rules
+
+    def protected_translation_rules(translation_rules: Any, language: str) -> List[Dict[str, Any]]:
+      protected: List[Dict[str, Any]] = []
+      for rule in normalize_translation_rules(translation_rules):
+        disabled = rule.get("translation_enabled") is False
+        excluded = language_is_configured(rule.get("excluded_languages"), language)
+        if disabled or excluded:
+          protected.append(rule)
+      return protected
+
+    def resolve_translation_policy(request: "TranslateRequest", content_item: Dict[str, Any]) -> Dict[str, Any]:
+      policy = {
+        "translation_enabled": content_item.get("translation_enabled", True),
+        "translation_excluded_languages": content_item.get("translation_excluded_languages") or [],
+        "translation_prewarm_languages": content_item.get("translation_prewarm_languages") or [],
+        "translation_rules": content_item.get("translation_rules") or [],
+      }
+      if isinstance(request.translation_policy, dict):
+        for key in ("translation_enabled", "translation_excluded_languages", "translation_prewarm_languages", "translation_rules"):
+          if key in request.translation_policy:
+            policy[key] = request.translation_policy[key]
+      return policy
+
+    def translation_blocked_by_policy(policy: Dict[str, Any], language: str) -> bool:
+      if policy.get("translation_enabled") is False:
+        return True
+      if language_is_configured(policy.get("translation_excluded_languages"), language):
+        return True
+      return any(rule.get("segments") == [] for rule in protected_translation_rules(policy.get("translation_rules"), language))
+
+    def apply_protected_placeholders(content_json: Dict[str, Any], policy: Dict[str, Any], language: str) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+      masked = copy.deepcopy(content_json)
+      replacements: List[Dict[str, Any]] = []
+      rules = sorted(
+        protected_translation_rules(policy.get("translation_rules"), language),
+        key=lambda rule: len(rule.get("segments") or []),
+      )
+      for rule in rules:
+        segments = rule.get("segments")
+        if not isinstance(segments, list) or not segments:
+          continue
+        exists, value = get_json_path_value(content_json, segments)
+        if not exists:
+          continue
+        placeholder = f"__CMS_TRANSLATION_PROTECTED_{len(replacements)}__"
+        if set_json_path_value(masked, segments, placeholder):
+          replacements.append({
+            "segments": segments,
+            "value": copy.deepcopy(value),
+            "placeholder": placeholder,
+          })
+      return masked, replacements
+
+    def restore_protected_values(translated: Dict[str, Any], replacements: List[Dict[str, Any]]) -> Dict[str, Any]:
+      restored = copy.deepcopy(translated)
+      for replacement in replacements:
+        segments = replacement.get("segments")
+        if isinstance(segments, list):
+          set_json_path_value(restored, segments, copy.deepcopy(replacement.get("value")))
+      return restored
 
     def resolve_translation_context(request: TranslateRequest) -> Dict[str, Any]:
       content_item = request.content_item if isinstance(request.content_item, dict) else {}
@@ -122,6 +333,8 @@ data:
       if not source_hash and content_item.get("source_hash") is not None:
         source_hash = str(content_item["source_hash"])
 
+      translation_policy = resolve_translation_policy(request, content_item)
+
       return {
         "source_language": normalize_language(request.source_language_code or request.source_language),
         "target_language": require_language(request.target_language or request.requested_language_code, "target_language"),
@@ -129,6 +342,7 @@ data:
         "source_content_version": source_content_version,
         "source_hash": source_hash,
         "model": resolve_model(request.model or request.translation_model),
+        "translation_policy": translation_policy,
         "content_json": content_json,
       }
 
@@ -156,7 +370,8 @@ data:
         "Translate CMS JSON content from the source language to the target language. "
         "Return only the translated content_json object as valid JSON, not the full request envelope. "
         "Preserve all object keys, array order, value types, URLs, IDs, code blocks, template tokens, "
-        "and HTML tags. Translate human-readable text values only."
+        "HTML tags, and any __CMS_TRANSLATION_PROTECTED_*__ placeholder values. "
+        "Translate human-readable text values only."
       )
       user_prompt = json.dumps(
         {
@@ -216,11 +431,22 @@ data:
       context = resolve_translation_context(request)
       target_language = context["target_language"]
       model = context["model"]
-      if target_language.lower() == context["source_language"].lower():
+      translation_policy = context["translation_policy"]
+      replacements: List[Dict[str, Any]] = []
+      if translation_blocked_by_policy(translation_policy, target_language):
+        translated = context["content_json"]
+      elif target_language.lower() == context["source_language"].lower():
         translated = context["content_json"]
       else:
-        translated = await call_openwebui(model, context["source_language"], target_language, context["content_json"])
+        content_for_model, replacements = apply_protected_placeholders(
+          context["content_json"],
+          translation_policy,
+          target_language,
+        )
+        translated = await call_openwebui(model, context["source_language"], target_language, content_for_model)
       translated = normalize_translated_content(translated)
+      if replacements:
+        translated = restore_protected_values(translated, replacements)
       return TranslateResponse(
         target_language=target_language,
         language_code=target_language,
@@ -289,7 +515,7 @@ spec:
             - name: OPENWEBUI_MODEL
               value: "deepseek-r1:14b"
             - name: PROMPT_VERSION
-              value: "cms-json-translation-v2"
+              value: "cms-json-translation-v3"
             - name: REQUEST_TIMEOUT_SECONDS
               value: "180"
             - name: OPENWEBUI_API_TOKEN
