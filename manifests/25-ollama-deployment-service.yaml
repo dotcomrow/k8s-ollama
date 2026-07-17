@@ -31,12 +31,15 @@ spec:
       initContainers:
         - name: download-models
           image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh","-c"]
           args:
             - |
               echo "🚀 Starting Ollama server..."
               ollama serve > /tmp/ollama.log 2>&1 &
               SERVER_PID=$!
+              trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT TERM INT
+
               apt update && apt install wget -y
               echo "⏳ Waiting for Ollama server..."
               i=1; while true; do
@@ -44,13 +47,61 @@ spec:
                   echo "✅ Ready"; break; fi
                 echo "⏳ Still waiting... ($i)"; i=$((i+1)); sleep 1
               done
+
+              trim() {
+                value="$1"
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+                printf '%s' "$value"
+              }
+
+              model_exists() {
+                ollama list | awk 'NR > 1 { print $1 }' | grep -Fxq "$1"
+              }
+
+              pull_model() {
+                model="$1"
+                if model_exists "$model"; then
+                  echo "✅ Model already present: ${model}"
+                  return 0
+                fi
+                attempt=1
+                max_attempts=5
+                until ollama pull "$model"; do
+                  if model_exists "$model"; then
+                    echo "✅ Model available after pull retry: ${model}"
+                    return 0
+                  fi
+                  if [ "$attempt" -ge "$max_attempts" ]; then
+                    echo "❌ Failed to pull model after ${max_attempts} attempts: ${model}"
+                    return 1
+                  fi
+                  sleep_seconds=$((attempt * 30))
+                  echo "⚠️ Pull failed for ${model}; retrying in ${sleep_seconds}s (${attempt}/${max_attempts})..."
+                  sleep "$sleep_seconds"
+                  attempt=$((attempt + 1))
+                done
+              }
+
               MODEL_FILE="/opt/ollama-models/models.txt"
               echo "📄 Downloading models listed in $MODEL_FILE..."
-              while IFS= read -r model; do
-                [ -n "$model" ] && [ "$(echo "$model" | cut -c1)" != "#" ] && \
-                  echo "📦 Pulling model: $model" && ollama pull "$model"
+              failed=0
+              while IFS= read -r model || [ -n "$model" ]; do
+                model="$(trim "${model%%#*}")"
+                if [ -z "$model" ]; then
+                  continue
+                fi
+                echo "📦 Pulling model: $model"
+                if ! pull_model "$model"; then
+                  failed=1
+                fi
               done < "$MODEL_FILE"
+              if [ "$failed" -ne 0 ]; then
+                echo "❌ One or more model pulls failed."
+                exit 1
+              fi
               echo "🛑 Stopping Ollama server (PID=$SERVER_PID)..."
+              trap - EXIT TERM INT
               kill $SERVER_PID; wait $SERVER_PID
           volumeMounts:
             - name: ollama-data
@@ -61,6 +112,7 @@ spec:
       containers:
         - name: ollama
           image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
           securityContext:
             capabilities: { add: ["SYS_ADMIN"] }
           env:
