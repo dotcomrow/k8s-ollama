@@ -480,6 +480,72 @@ spec:
                 done
               }
 
+              model_available() {
+                model_id="$1"
+                echo "$MODELS_JSON" | jq -e --arg model_id "$model_id" '.models[]? | select(.model == $model_id)' >/dev/null
+              }
+
+              expected_models() {
+                model_file="${MODEL_FILE:-/opt/ollama-models/models.txt}"
+                [ -f "$model_file" ] || return 0
+                while IFS= read -r model || [ -n "$model" ]; do
+                  model="$(trim "${model%%#*}")"
+                  if [ -n "$model" ]; then
+                    printf '%s\n' "$model"
+                  fi
+                done < "$model_file"
+              }
+
+              fetch_ollama_models() {
+                MODELS_JSON=""
+                for _ in 1 2 3 4 5; do
+                  if MODELS_JSON="$(curl -fsS "$OLLAMA_TAGS_URL")"; then
+                    return 0
+                  fi
+                  sleep 3
+                done
+                return 1
+              }
+
+              wait_for_expected_models() {
+                expected="$(expected_models || true)"
+                if [ -z "$expected" ]; then
+                  echo "No expected model list mounted; syncing currently available Ollama models."
+                  fetch_ollama_models
+                  return
+                fi
+
+                timeout_seconds="${MODEL_SYNC_EXPECTED_MODELS_TIMEOUT_SECONDS:-1800}"
+                wait_interval="${MODEL_SYNC_EXPECTED_MODELS_WAIT_INTERVAL_SECONDS:-10}"
+                elapsed=0
+                while true; do
+                  if ! fetch_ollama_models; then
+                    echo "Failed to fetch Ollama model list; retrying..."
+                  else
+                    missing=""
+                    for expected_model in $expected; do
+                      if ! model_available "$expected_model"; then
+                        missing="${missing} ${expected_model}"
+                      fi
+                    done
+
+                    missing="$(trim "$missing")"
+                    if [ -z "$missing" ]; then
+                      echo "All expected Ollama models are available."
+                      return
+                    fi
+                    echo "Waiting for Ollama models to finish pulling: ${missing}"
+                  fi
+
+                  if [ "$elapsed" -ge "$timeout_seconds" ]; then
+                    echo "Timed out waiting for expected Ollama models."
+                    exit 1
+                  fi
+                  sleep "$wait_interval"
+                  elapsed=$((elapsed + wait_interval))
+                done
+              }
+
               DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.env DEFAULT_MODELS || true)"
               if [ -z "$DEFAULT_MODEL_ID" ]; then
                 DEFAULT_MODEL_ID="$(get_prop_value /config/openwebui.properties DEFAULT_MODELS || true)"
@@ -512,18 +578,7 @@ spec:
                 ADMIN_ID="$MODEL_OWNER_ID"
               fi
 
-              MODELS_JSON=""
-              for _ in 1 2 3 4 5; do
-                if MODELS_JSON="$(curl -fsS "$OLLAMA_TAGS_URL")"; then
-                  break
-                fi
-                sleep 3
-              done
-
-              if [ -z "$MODELS_JSON" ]; then
-                echo "Failed to fetch Ollama model list"
-                exit 1
-              fi
+              wait_for_expected_models
 
               echo "$MODELS_JSON" | jq -r '.models[].model' | sort -u | while read -r model_id; do
                 if [ -z "$model_id" ]; then
@@ -551,11 +606,19 @@ spec:
                   optional: true
             - name: OLLAMA_TAGS_URL
               value: "http://ollama.ollama.svc.cluster.local:11434/api/tags"
+            - name: MODEL_SYNC_EXPECTED_MODELS_TIMEOUT_SECONDS
+              value: "1800"
           volumeMounts:
             - name: openwebui-config
               mountPath: /config
+              readOnly: true
+            - name: model-list
+              mountPath: /opt/ollama-models
               readOnly: true
       volumes:
         - name: openwebui-config
           configMap:
             name: openwebui-config
+        - name: model-list
+          configMap:
+            name: ollama-models
