@@ -43,12 +43,14 @@ data:
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel, Field
 
-    APP_VERSION = "1.2.1"
+    APP_VERSION = "1.2.2"
     OPENWEBUI_BASE_URL = os.environ.get("OPENWEBUI_BASE_URL", "http://open-webui.ollama.svc.cluster.local:80").rstrip("/")
     OPENWEBUI_CHAT_COMPLETIONS_PATH = os.environ.get("OPENWEBUI_CHAT_COMPLETIONS_PATH", "/api/chat/completions")
+    OPENWEBUI_MODELS_PATH = os.environ.get("OPENWEBUI_MODELS_PATH", "/api/models")
     OPENWEBUI_API_TOKEN = os.environ.get("OPENWEBUI_API_TOKEN", "").strip()
     OPENWEBUI_MODEL = os.environ.get("OPENWEBUI_MODEL", "deepseek-r1:14b")
     REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "180"))
+    READINESS_TIMEOUT_SECONDS = float(os.environ.get("READINESS_TIMEOUT_SECONDS", "8"))
     PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "cms-json-translation-v3")
     LANGUAGE_PATTERN = re.compile(r"^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8}){0,8}$")
     MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
@@ -141,6 +143,47 @@ data:
       if not MODEL_PATTERN.match(candidate):
         raise HTTPException(status_code=422, detail="model must be a valid Ollama/OpenWebUI model id.")
       return candidate
+
+    def openwebui_headers() -> Dict[str, str]:
+      headers = {"Accept": "application/json", "Content-Type": "application/json"}
+      if OPENWEBUI_API_TOKEN:
+        headers["Authorization"] = f"Bearer {OPENWEBUI_API_TOKEN}"
+      return headers
+
+    def collect_model_ids(value: Any) -> List[str]:
+      ids: List[str] = []
+      if isinstance(value, dict):
+        for key in ("id", "name", "model"):
+          candidate = value.get(key)
+          if isinstance(candidate, str) and candidate.strip():
+            ids.append(candidate.strip())
+        for key in ("data", "models"):
+          nested = value.get(key)
+          if nested is not value:
+            ids.extend(collect_model_ids(nested))
+      elif isinstance(value, list):
+        for item in value:
+          ids.extend(collect_model_ids(item))
+      elif isinstance(value, str) and value.strip():
+        ids.append(value.strip())
+      deduped: List[str] = []
+      for model_id in ids:
+        if model_id not in deduped:
+          deduped.append(model_id)
+      return deduped
+
+    def model_available(model: str, available_models: List[str]) -> bool:
+      requested = model.strip().lower()
+      return any(candidate.strip().lower() == requested for candidate in available_models)
+
+    async def fetch_openwebui_models() -> List[str]:
+      async with httpx.AsyncClient(timeout=READINESS_TIMEOUT_SECONDS) as client:
+        response = await client.get(
+          f"{OPENWEBUI_BASE_URL}{OPENWEBUI_MODELS_PATH}",
+          headers=openwebui_headers(),
+        )
+        response.raise_for_status()
+      return collect_model_ids(response.json())
 
     def coerce_json_object_array(value: Any) -> List[Dict[str, Any]]:
       if isinstance(value, str):
@@ -384,9 +427,6 @@ data:
         },
         ensure_ascii=False,
       )
-      headers = {"Accept": "application/json", "Content-Type": "application/json"}
-      if OPENWEBUI_API_TOKEN:
-        headers["Authorization"] = f"Bearer {OPENWEBUI_API_TOKEN}"
       body = {
         "model": model,
         "messages": [
@@ -398,7 +438,7 @@ data:
       async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
         response = await client.post(
           f"{OPENWEBUI_BASE_URL}{OPENWEBUI_CHAT_COMPLETIONS_PATH}",
-          headers=headers,
+          headers=openwebui_headers(),
           json=body,
         )
         response.raise_for_status()
@@ -424,8 +464,44 @@ data:
         "ok": True,
         "version": APP_VERSION,
         "openwebui_base_url": OPENWEBUI_BASE_URL,
+        "openwebui_models_path": OPENWEBUI_MODELS_PATH,
         "model": OPENWEBUI_MODEL,
         "default_model": OPENWEBUI_MODEL,
+        "has_openwebui_token": bool(OPENWEBUI_API_TOKEN),
+      }
+
+    @app.get("/readyz")
+    async def readyz() -> Dict[str, Any]:
+      try:
+        available_models = await fetch_openwebui_models()
+      except Exception as exc:
+        raise HTTPException(
+          status_code=503,
+          detail={
+            "ok": False,
+            "reason": "openwebui_model_list_unavailable",
+            "openwebui_base_url": OPENWEBUI_BASE_URL,
+            "openwebui_models_path": OPENWEBUI_MODELS_PATH,
+            "model": OPENWEBUI_MODEL,
+            "error": str(exc)[:500],
+          },
+        ) from exc
+      if not model_available(OPENWEBUI_MODEL, available_models):
+        raise HTTPException(
+          status_code=503,
+          detail={
+            "ok": False,
+            "reason": "configured_model_unavailable",
+            "model": OPENWEBUI_MODEL,
+            "model_count": len(available_models),
+          },
+        )
+      return {
+        "ok": True,
+        "version": APP_VERSION,
+        "openwebui_base_url": OPENWEBUI_BASE_URL,
+        "model": OPENWEBUI_MODEL,
+        "model_count": len(available_models),
         "has_openwebui_token": bool(OPENWEBUI_API_TOKEN),
       }
 
@@ -516,12 +592,16 @@ spec:
               value: "http://open-webui.ollama.svc.cluster.local:80"
             - name: OPENWEBUI_CHAT_COMPLETIONS_PATH
               value: "/api/chat/completions"
+            - name: OPENWEBUI_MODELS_PATH
+              value: "/api/models"
             - name: OPENWEBUI_MODEL
               value: "deepseek-r1:14b"
             - name: PROMPT_VERSION
               value: "cms-json-translation-v3"
             - name: REQUEST_TIMEOUT_SECONDS
               value: "600"
+            - name: READINESS_TIMEOUT_SECONDS
+              value: "8"
             - name: OPENWEBUI_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -534,13 +614,20 @@ spec:
               set -e
               pip install --no-cache-dir -r /app/requirements.txt >/dev/null
               python -m uvicorn app:app --app-dir /app --host 0.0.0.0 --port 8080
-          readinessProbe:
+          startupProbe:
             httpGet:
               path: /healthz
               port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 10
             failureThreshold: 6
           livenessProbe:
             httpGet:

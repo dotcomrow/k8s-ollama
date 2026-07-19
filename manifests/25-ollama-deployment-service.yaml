@@ -219,6 +219,46 @@ spec:
               wait "$SERVER_PID"
           ports:
             - containerPort: 11434
+          startupProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  ollama list >/tmp/ollama-health-models.txt
+                  trim() {
+                    value="$1"
+                    value="${value#"${value%%[![:space:]]*}"}"
+                    value="${value%"${value##*[![:space:]]}"}"
+                    printf '%s' "$value"
+                  }
+                  if [ -f /opt/ollama-models/models.txt ]; then
+                    while IFS= read -r model || [ -n "$model" ]; do
+                      model="$(trim "${model%%#*}")"
+                      if [ -z "$model" ]; then
+                        continue
+                      fi
+                      awk 'NR > 1 { print $1 }' /tmp/ollama-health-models.txt | grep -Fxq "$model"
+                    done < /opt/ollama-models/models.txt
+                  fi
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests:
               cpu: "4"
