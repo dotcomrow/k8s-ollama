@@ -77,6 +77,20 @@ spec:
 apiVersion: policy.linkerd.io/v1beta1
 kind: ServerAuthorization
 metadata:
+  name: cms-translation-service-from-runtime-status
+  namespace: ollama
+spec:
+  server:
+    name: cms-translation-service
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: directus
+          namespace: directus
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
   name: cms-translation-service-from-unmeshed-nifi
   namespace: ollama
 spec:
