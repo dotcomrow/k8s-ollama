@@ -43,7 +43,7 @@ data:
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel, Field
 
-    APP_VERSION = "1.2.0"
+    APP_VERSION = "1.2.1"
     OPENWEBUI_BASE_URL = os.environ.get("OPENWEBUI_BASE_URL", "http://open-webui.ollama.svc.cluster.local:80").rstrip("/")
     OPENWEBUI_CHAT_COMPLETIONS_PATH = os.environ.get("OPENWEBUI_CHAT_COMPLETIONS_PATH", "/api/chat/completions")
     OPENWEBUI_API_TOKEN = os.environ.get("OPENWEBUI_API_TOKEN", "").strip()
@@ -63,6 +63,7 @@ data:
       content_item_id: Optional[str] = None
       source_content_version: Optional[int] = None
       source_hash: Optional[str] = None
+      translation_job_id: Optional[str] = None
       model: Optional[str] = None
       translation_model: Optional[str] = None
       translation_policy: Optional[Dict[str, Any]] = None
@@ -76,6 +77,7 @@ data:
       content_item_id: Optional[str] = None
       source_content_version: Optional[int] = None
       source_hash: Optional[str] = None
+      translation_job_id: Optional[str] = None
       content_json: Dict[str, Any]
       model: str
       prompt_version: str
@@ -341,6 +343,7 @@ data:
         "content_item_id": content_item_id,
         "source_content_version": source_content_version,
         "source_hash": source_hash,
+        "translation_job_id": request.translation_job_id,
         "model": resolve_model(request.model or request.translation_model),
         "translation_policy": translation_policy,
         "content_json": content_json,
@@ -453,6 +456,7 @@ data:
         content_item_id=context["content_item_id"],
         source_content_version=context["source_content_version"],
         source_hash=context["source_hash"],
+        translation_job_id=context["translation_job_id"],
         content_json=translated,
         model=model,
         prompt_version=PROMPT_VERSION,
@@ -517,7 +521,7 @@ spec:
             - name: PROMPT_VERSION
               value: "cms-json-translation-v3"
             - name: REQUEST_TIMEOUT_SECONDS
-              value: "180"
+              value: "600"
             - name: OPENWEBUI_API_TOKEN
               valueFrom:
                 secretKeyRef:
