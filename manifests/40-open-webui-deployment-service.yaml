@@ -26,7 +26,9 @@ spec:
       serviceAccountName: openwebui
       initContainers:
         - name: openwebui-db-autoheal
-          image: ghcr.io/open-webui/open-webui:latest
+          # Keep DB migrations and runtime code on the same image. Independent
+          # `latest` resolution caused newer app code to run against an older schema.
+          image: &open_webui_image ghcr.io/open-webui/open-webui@sha256:6a773e5c3a246b65cbe74ce942b294292c0e5f81c138f703d111bc162f7d7c3d
           imagePullPolicy: IfNotPresent
           workingDir: /app/backend
           command: ["/bin/bash", "-lc"]
@@ -317,7 +319,8 @@ spec:
               readOnly: true
       containers:
         - name: open-webui
-          image: ghcr.io/open-webui/open-webui:latest
+          image: *open_webui_image
+          imagePullPolicy: IfNotPresent
           workingDir: /app/backend
           command: ["/bin/sh", "-c"]
           args:
