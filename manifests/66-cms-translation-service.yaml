@@ -626,7 +626,7 @@ spec:
               path: /readyz
               port: 8080
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 6
           livenessProbe:
