@@ -45,7 +45,7 @@ spec:
       serviceAccountName: ollama-async-subscription-service
       containers:
         - name: app
-          image: ghcr.io/dotcomrow/ollama-async-subscription-service:sha-ab88123
+          image: ghcr.io/dotcomrow/ollama-async-subscription-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
