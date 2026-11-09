@@ -7,6 +7,7 @@ metadata:
     app: open-webui
   annotations:
     argocd.argoproj.io/sync-wave: "2"
+    platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
     reloader.stakater.com/auto: "true"
     reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config,openwebui-sitecustomize"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"

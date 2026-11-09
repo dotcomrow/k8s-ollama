@@ -222,6 +222,7 @@ metadata:
   annotations:
     # Needs Vault-synced secrets to exist first.
     argocd.argoproj.io/sync-wave: "2"
+    platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
 spec:
   replicas: 1
   selector:

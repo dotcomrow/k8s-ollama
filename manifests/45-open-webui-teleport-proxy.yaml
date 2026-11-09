@@ -106,6 +106,7 @@ metadata:
   annotations:
     # Depends on the open-webui Service existing for nginx upstream DNS resolution.
     argocd.argoproj.io/sync-wave: "4"
+    platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
     reloader.stakater.com/auto: "true"
     reloader.stakater.com/configmap: "open-webui-teleport-proxy"
 spec:

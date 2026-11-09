@@ -5,6 +5,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
   labels:
     app: open-webui-openapi
 spec:

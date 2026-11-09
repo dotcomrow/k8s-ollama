@@ -564,6 +564,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "4"
+    platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
