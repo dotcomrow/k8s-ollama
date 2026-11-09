@@ -5,7 +5,8 @@ metadata:
   name: ollama
   labels:
     app: ollama
-    platform.suncoast.systems/vpa-exclude: "true"
+    platform.suncoast.systems/autosize: "enabled"
+    goldilocks.fairwinds.com/enabled: "true"
   annotations:
     linkerd.io/inject: enabled
     field.cattle.io/projectId: local:applications
