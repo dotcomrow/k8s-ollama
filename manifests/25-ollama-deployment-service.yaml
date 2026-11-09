@@ -255,11 +255,11 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "4"
+              cpu: "3"
               memory: "12Gi"
               nvidia.com/gpu: 1
             limits:
-              cpu: "4"
+              cpu: "3"
               memory: "12Gi"
               nvidia.com/gpu: 1
           volumeMounts:
