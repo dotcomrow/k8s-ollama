@@ -147,11 +147,31 @@ spec:
 
               echo "✅ Schema & object ownership set to $OWNER_LOGIN"
 
-              # Create Vault static role for password rotation of fixed login
+              # Keep OpenWebUI on its own Vault database connection so another
+              # workload cannot remove openwebui-login by replacing the shared
+              # yugabyte connection's allowed_roles list.
+              echo "🔐 Configuring dedicated Vault database connection for OpenWebUI ..."
+              vault write yugabyte-db/config/openwebui \
+                plugin_name="postgresql-database-plugin" \
+                connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/${MAINT_DB}?sslmode=disable" \
+                username="${VAULTADMIN_USER}" \
+                password="${VAULTADMIN_PASS}" \
+                allowed_roles="openwebui-login" \
+                max_open_connections="40" \
+                max_idle_connections="0" \
+                max_connection_lifetime="0s"
+
+              # A static role cannot move between database connections in
+              # place. Recreate it only for the one-time migration from the
+              # shared connection; later syncs remain idempotent.
+              STATIC_ROLE_DB="$(vault read -field=db_name yugabyte-db/static-roles/openwebui-login 2>/dev/null || true)"
+              if [ -n "$STATIC_ROLE_DB" ] && [ "$STATIC_ROLE_DB" != "openwebui" ]; then
+                vault delete yugabyte-db/static-roles/openwebui-login >/dev/null
+              fi
               echo "🔐 Configuring Vault static role for $OWNER_LOGIN ..."
               cat <<'JSON' | vault write yugabyte-db/static-roles/openwebui-login - 
               {
-                "db_name": "yugabyte",
+                "db_name": "openwebui",
                 "username": "openwebui_login",
                 "rotation_statements": [
                   "ALTER ROLE \"{{username}}\" WITH PASSWORD '{{password}}'"

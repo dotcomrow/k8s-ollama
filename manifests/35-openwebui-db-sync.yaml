@@ -9,10 +9,13 @@ metadata:
     linkerd.io/inject: disabled
 spec:
   schedule: "0 0 * * *"
+  concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 1
       template:
         metadata:
