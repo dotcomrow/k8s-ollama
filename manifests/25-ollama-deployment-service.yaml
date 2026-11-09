@@ -24,6 +24,8 @@ spec:
       labels:
         app: ollama
         platform.suncoast.systems/vpa-exclude: "true"
+      annotations:
+        platform.suncoast.systems/resource-patch-revision: "2026-11-09-ollama-cpu-request"
     spec:
       nodeSelector:
         suncoast.systems/gpu: t4
