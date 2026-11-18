@@ -121,7 +121,30 @@ data:
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid subject token")
 
-    def upsert_user(sub: str, email: str, name: str, preferred_username: str, oauth: dict):
+    def resolve_user_id(cur, sub: str, email: str) -> str:
+        # OpenWebUI assigns its own UUID when an OIDC user first signs in. Match
+        # that account by the stored OIDC subject before considering creation.
+        cur.execute(
+            '''SELECT id FROM "user"
+               WHERE oauth::jsonb -> 'oidc' ->> 'sub' = %s
+                  OR oauth::jsonb -> 'keycloak' ->> 'sub' = %s
+               ORDER BY created_at ASC LIMIT 1''',
+            (sub, sub),
+        )
+        existing = cur.fetchone()
+        if existing is not None:
+            return existing[0]
+        if email:
+            cur.execute(
+                'SELECT id FROM "user" WHERE lower(email) = lower(%s) ORDER BY created_at ASC LIMIT 1',
+                (email,),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                return existing[0]
+        return sub
+
+    def upsert_user(sub: str, email: str, name: str, preferred_username: str, oauth: dict) -> str:
         if not DATABASE_URL:
             raise HTTPException(status_code=500, detail="DATABASE_URL not set")
         if not WEBUI_SECRET_KEY:
@@ -135,13 +158,19 @@ data:
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM auth WHERE id = %s", (sub,))
+                    user_id = resolve_user_id(cur, sub, email)
+                    cur.execute("SELECT id FROM auth WHERE id = %s", (user_id,))
                     if cur.fetchone() is None:
                         cur.execute(
                             "INSERT INTO auth (id, email, password, active) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                            (sub, email, pw_hash, True),
+                            (user_id, email, pw_hash, True),
                         )
-                    cur.execute("SELECT id FROM \"user\" WHERE id = %s", (sub,))
+                    else:
+                        cur.execute(
+                            "UPDATE auth SET email = COALESCE(NULLIF(email, ''), %s), active = true WHERE id = %s",
+                            (email, user_id),
+                        )
+                    cur.execute("SELECT id FROM \"user\" WHERE id = %s", (user_id,))
                     if cur.fetchone() is None:
                         cur.execute(
                             """INSERT INTO "user" (
@@ -150,7 +179,7 @@ data:
                               ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                               ON CONFLICT (id) DO NOTHING""",
                             (
-                                sub,
+                                user_id,
                                 email,
                                 preferred_username,
                                 "user",
@@ -162,6 +191,19 @@ data:
                                 now,
                             ),
                         )
+                    else:
+                        cur.execute(
+                            '''UPDATE "user" SET
+                                 email = COALESCE(NULLIF(email, ''), %s),
+                                 username = COALESCE(NULLIF(username, ''), %s),
+                                 name = COALESCE(NULLIF(name, ''), %s),
+                                 oauth = (COALESCE(oauth, '{}'::json)::jsonb || %s::jsonb)::json,
+                                 last_active_at = %s,
+                                 updated_at = %s
+                               WHERE id = %s''',
+                            (email, preferred_username, name, json.dumps(oauth), now, now, user_id),
+                        )
+                    return user_id
         finally:
             conn.close()
 
@@ -172,18 +214,33 @@ data:
         token = jwt.encode(payload, WEBUI_SECRET_KEY, algorithm="HS256")
         return token, ttl
 
-    def require_existing_user(user_id: str):
+    def resolve_existing_user_id(user_id: str) -> str:
         if not DATABASE_URL:
             raise HTTPException(status_code=500, detail="DATABASE_URL not set")
         conn = psycopg2.connect(DATABASE_URL)
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    'SELECT 1 FROM "user" u JOIN auth a ON a.id = u.id WHERE u.id = %s AND a.active = true',
+                    'SELECT u.id FROM "user" u JOIN auth a ON a.id = u.id WHERE u.id = %s AND a.active = true',
                     (user_id,),
                 )
-                if cur.fetchone() is None:
+                existing = cur.fetchone()
+                if existing is not None:
+                    return existing[0]
+                # During a rolling upgrade an older research API may still
+                # carry the Keycloak subject instead of OpenWebUI's UUID.
+                cur.execute(
+                    '''SELECT u.id FROM "user" u JOIN auth a ON a.id = u.id
+                       WHERE a.active = true
+                         AND (u.oauth::jsonb -> 'oidc' ->> 'sub' = %s
+                           OR u.oauth::jsonb -> 'keycloak' ->> 'sub' = %s)
+                       ORDER BY u.created_at ASC LIMIT 1''',
+                    (user_id, user_id),
+                )
+                existing = cur.fetchone()
+                if existing is None:
                     raise HTTPException(status_code=404, detail="OpenWebUI user not found")
+                return existing[0]
         finally:
             conn.close()
 
@@ -219,11 +276,12 @@ data:
         name = decoded.get("name") or raw_username or preferred_username
         oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": raw_username}}
 
-        upsert_user(sub, email, name, preferred_username, oauth)
-        token, ttl = mint_webui_token(sub)
+        user_id = upsert_user(sub, email, name, preferred_username, oauth)
+        token, ttl = mint_webui_token(user_id)
 
         return {
             "access_token": token,
+            "user_id": user_id,
             "token_type": "Bearer",
             "expires_in": ttl,
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
@@ -234,10 +292,11 @@ data:
         # Network access to this endpoint is restricted by Linkerd to trusted
         # research service accounts. It never creates or impersonates an
         # unknown user; interactive token exchange must provision the account.
-        require_existing_user(user_id)
-        token, ttl = mint_webui_token(user_id)
+        resolved_user_id = resolve_existing_user_id(user_id)
+        token, ttl = mint_webui_token(resolved_user_id)
         return {
             "access_token": token,
+            "user_id": resolved_user_id,
             "token_type": "Bearer",
             "expires_in": ttl,
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
@@ -252,6 +311,9 @@ metadata:
     # Needs Vault-synced secrets to exist first.
     argocd.argoproj.io/sync-wave: "2"
     platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
+    reloader.stakater.com/auto: "true"
+    reloader.stakater.com/configmap: "openwebui-auth-bridge"
+    reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
 spec:
   replicas: 1
   selector:
@@ -262,8 +324,9 @@ spec:
       labels:
         app: openwebui-auth-bridge
       annotations:
-        reloader.stakater.com/configmap: "openwebui-auth-bridge"
-        reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
+        # Force the currently mounted bridge source to be loaded by the Python
+        # process. Future ConfigMap and Secret changes are handled by Reloader.
+        platform.suncoast.systems/config-revision: "f3c5bfdad3fa0ed88dffe47e401632ac59747050"
     spec:
       containers:
         - name: openwebui-auth-bridge
