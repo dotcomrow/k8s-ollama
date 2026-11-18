@@ -12,6 +12,10 @@ metadata:
     reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config,openwebui-sitecustomize"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"
 spec:
+  # Open WebUI schema migrations do not support old and new application
+  # versions running against the database at the same time.
+  strategy:
+    type: Recreate
   replicas: 1
   selector:
     matchLabels:
@@ -29,7 +33,7 @@ spec:
         - name: openwebui-db-autoheal
           # Keep DB migrations and runtime code on the same image. Independent
           # `latest` resolution caused newer app code to run against an older schema.
-          image: &open_webui_image ghcr.io/open-webui/open-webui@sha256:6a773e5c3a246b65cbe74ce942b294292c0e5f81c138f703d111bc162f7d7c3d
+          image: &open_webui_image ghcr.io/open-webui/open-webui:v0.13.3@sha256:46b59158e6558eeb980bc828e0f1b30238ad24d82ed84d5e5eda1dab2a082f14
           imagePullPolicy: IfNotPresent
           workingDir: /app/backend
           command: ["/bin/bash", "-lc"]
@@ -352,7 +356,7 @@ spec:
             - name: webui-data
               mountPath: /app/backend/data
             - name: openwebui-sitecustomize
-              mountPath: /usr/local/lib/python3.11/site-packages/sitecustomize.py
+              mountPath: /usr/local/lib/python3.12/site-packages/sitecustomize.py
               subPath: sitecustomize.py
               readOnly: true
       containers:
@@ -502,7 +506,7 @@ spec:
             - name: webui-data
               mountPath: /app/backend/data
             - name: openwebui-sitecustomize
-              mountPath: /usr/local/lib/python3.11/site-packages/sitecustomize.py
+              mountPath: /usr/local/lib/python3.12/site-packages/sitecustomize.py
               subPath: sitecustomize.py
               readOnly: true
       volumes:
@@ -523,7 +527,7 @@ metadata:
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "3"
-    platform.suncoast.systems/openwebui-db-schema-compat: "v0.7"
+    platform.suncoast.systems/openwebui-db-schema-compat: "v0.13.3"
     # Gravitee discovery
     gravitee.io/expose: "true"
     gravitee.io/context-path: "/open-webui"
