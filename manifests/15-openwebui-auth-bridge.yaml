@@ -36,6 +36,16 @@ data:
     JWKS_CACHE_SECONDS = int(os.environ.get("JWKS_CACHE_SECONDS", "300"))
     JWKS_TIMEOUT_SECONDS = int(os.environ.get("JWKS_TIMEOUT_SECONDS", "5"))
     USERNAME_MAX_LEN = int(os.environ.get("WEBUI_USERNAME_MAX", "50"))
+    ALLOWED_MEMBERSHIP_ROLES = frozenset(
+        value.strip().lower()
+        for value in os.environ.get("ALLOWED_MEMBERSHIP_ROLES", "").split(",")
+        if value.strip()
+    )
+    MODEL_ACCESS_IDS = tuple(
+        value.strip()
+        for value in os.environ.get("MODEL_ACCESS_IDS", "").split(",")
+        if value.strip()
+    )
 
     _jwks_cache = {"data": None, "loaded_at": 0.0}
     _jwks_lock = threading.Lock()
@@ -120,6 +130,23 @@ data:
             )
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid subject token")
+
+    def membership_roles(decoded: dict) -> set[str]:
+        roles: set[str] = set()
+
+        def add(values):
+            if not isinstance(values, list):
+                return
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    roles.add(value.strip().lower())
+
+        add(decoded.get("suncoast_roles"))
+        add(decoded.get("suncoastRoles"))
+        suncoast = decoded.get("suncoast")
+        if isinstance(suncoast, dict):
+            add(suncoast.get("roles"))
+        return roles
 
     def resolve_user_id(cur, sub: str, email: str) -> str:
         # OpenWebUI assigns its own UUID when an OIDC user first signs in. Match
@@ -207,6 +234,82 @@ data:
         finally:
             conn.close()
 
+    def reconcile_model_access(user_id: str, enabled: bool) -> None:
+        if not MODEL_ACCESS_IDS:
+            return
+        now = int(time.time())
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        '''DELETE FROM access_grant
+                           WHERE resource_type = 'model'
+                             AND principal_type = 'user'
+                             AND principal_id = %s
+                             AND permission = 'read'
+                             AND resource_id = ANY(%s)''',
+                        (user_id, list(MODEL_ACCESS_IDS)),
+                    )
+                    if enabled:
+                        for model_id in MODEL_ACCESS_IDS:
+                            grant_id = str(uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                f"suncoast:model-access:{model_id}:user:{user_id}:read",
+                            ))
+                            cur.execute(
+                                '''INSERT INTO access_grant
+                                     (id, resource_type, resource_id, principal_type, principal_id, permission, created_at)
+                                   VALUES (%s, 'model', %s, 'user', %s, 'read', %s)
+                                   ON CONFLICT (resource_type, resource_id, principal_type, principal_id, permission)
+                                   DO UPDATE SET created_at = EXCLUDED.created_at''',
+                                (grant_id, model_id, user_id, now),
+                            )
+        finally:
+            conn.close()
+
+    def revoke_existing_model_access(sub: str, email: str) -> None:
+        if not DATABASE_URL or not MODEL_ACCESS_IDS:
+            return
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''SELECT id FROM "user"
+                       WHERE oauth::jsonb -> 'oidc' ->> 'sub' = %s
+                          OR oauth::jsonb -> 'keycloak' ->> 'sub' = %s
+                          OR lower(email) = lower(%s)
+                       ORDER BY created_at ASC LIMIT 1''',
+                    (sub, sub, email),
+                )
+                existing = cur.fetchone()
+            if existing is not None:
+                reconcile_model_access(existing[0], False)
+        finally:
+            conn.close()
+
+    def require_current_model_access(user_id: str) -> None:
+        if not MODEL_ACCESS_IDS:
+            return
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''SELECT count(DISTINCT resource_id)
+                       FROM access_grant
+                       WHERE resource_type = 'model'
+                         AND principal_type = 'user'
+                         AND principal_id = %s
+                         AND permission = 'read'
+                         AND resource_id = ANY(%s)''',
+                    (user_id, list(MODEL_ACCESS_IDS)),
+                )
+                count = int(cur.fetchone()[0])
+                if count != len(MODEL_ACCESS_IDS):
+                    raise HTTPException(status_code=403, detail="Configured model access required")
+        finally:
+            conn.close()
+
     def mint_webui_token(user_id: str):
         ttl = parse_duration(JWT_EXPIRES_IN)
         exp = int(time.time()) + ttl
@@ -271,12 +374,17 @@ data:
             raise HTTPException(status_code=401, detail="Missing subject")
 
         email = decoded.get("email") or decoded.get("preferred_username") or f"{sub}@idp.local"
+        authorized = bool(ALLOWED_MEMBERSHIP_ROLES.intersection(membership_roles(decoded)))
+        if not authorized:
+            revoke_existing_model_access(sub, email)
+            raise HTTPException(status_code=403, detail="Approved application membership required")
         raw_username = decoded.get("preferred_username") or email
         preferred_username = normalize_username(raw_username, sub)
         name = decoded.get("name") or raw_username or preferred_username
         oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": raw_username}}
 
         user_id = upsert_user(sub, email, name, preferred_username, oauth)
+        reconcile_model_access(user_id, True)
         token, ttl = mint_webui_token(user_id)
 
         return {
@@ -290,9 +398,10 @@ data:
     @app.post("/internal/token")
     def internal_token(user_id: str = Body(..., embed=True)):
         # Network access to this endpoint is restricted by Linkerd to trusted
-        # research service accounts. It never creates or impersonates an
+        # application service accounts. It never creates or impersonates an
         # unknown user; interactive token exchange must provision the account.
         resolved_user_id = resolve_existing_user_id(user_id)
+        require_current_model_access(resolved_user_id)
         token, ttl = mint_webui_token(resolved_user_id)
         return {
             "access_token": token,
@@ -339,6 +448,12 @@ spec:
               value: "https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs"
             - name: WEBUI_JWT_EXPIRES_IN
               value: "4w"
+            - name: ALLOWED_MEMBERSHIP_ROLES
+              # Comma-separated Google group-derived Suncoast roles for every
+              # application allowed to use this shared OpenWebUI bridge.
+              value: "research_application_users"
+            - name: MODEL_ACCESS_IDS
+              value: "qwen3:14b"
           envFrom:
             - secretRef:
                 name: openwebui-db-url
