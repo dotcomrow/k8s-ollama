@@ -32,6 +32,8 @@ spec:
           namespace: ollama
         - name: open-webui-teleport-proxy
           namespace: ollama
+        - name: research-processing-service
+          namespace: research
 ---
 apiVersion: policy.linkerd.io/v1beta1
 kind: ServerAuthorization
@@ -45,6 +47,36 @@ spec:
     meshTLS:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: openwebui-auth-bridge
+  namespace: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: openwebui-auth-bridge
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: openwebui-auth-bridge-from-platform
+  namespace: ollama
+spec:
+  server:
+    name: openwebui-auth-bridge
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: gravitee
+          namespace: k8s-api-gateway
+        - name: research-api
+          namespace: research
+        - name: research-processing-service
+          namespace: research
 ---
 apiVersion: policy.linkerd.io/v1beta1
 kind: Server
@@ -141,3 +173,17 @@ spec:
     meshTLS:
       identities:
         - "*.ollama.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: ollama-from-research-processing
+  namespace: ollama
+spec:
+  server:
+    name: ollama
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: research-processing-service
+          namespace: research

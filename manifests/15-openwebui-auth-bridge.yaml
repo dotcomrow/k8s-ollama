@@ -23,7 +23,7 @@ data:
     import psycopg2
     import threading
     import urllib.request
-    from fastapi import FastAPI, Form, HTTPException
+    from fastapi import Body, FastAPI, Form, HTTPException
 
     ISSUER = os.environ.get("KEYCLOAK_ISSUER", "https://auth.suncoast.systems/realms/external")
     JWKS_URL = os.environ.get(
@@ -172,6 +172,21 @@ data:
         token = jwt.encode(payload, WEBUI_SECRET_KEY, algorithm="HS256")
         return token, ttl
 
+    def require_existing_user(user_id: str):
+        if not DATABASE_URL:
+            raise HTTPException(status_code=500, detail="DATABASE_URL not set")
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT 1 FROM "user" u JOIN auth a ON a.id = u.id WHERE u.id = %s AND a.active = true',
+                    (user_id,),
+                )
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail="OpenWebUI user not found")
+        finally:
+            conn.close()
+
     @app.post("/token")
     def token_exchange(
         grant_type: str = Form(...),
@@ -207,6 +222,20 @@ data:
         upsert_user(sub, email, name, preferred_username, oauth)
         token, ttl = mint_webui_token(sub)
 
+        return {
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_in": ttl,
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        }
+
+    @app.post("/internal/token")
+    def internal_token(user_id: str = Body(..., embed=True)):
+        # Network access to this endpoint is restricted by Linkerd to trusted
+        # research service accounts. It never creates or impersonates an
+        # unknown user; interactive token exchange must provision the account.
+        require_existing_user(user_id)
+        token, ttl = mint_webui_token(user_id)
         return {
             "access_token": token,
             "token_type": "Bearer",
