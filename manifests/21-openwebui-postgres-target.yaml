@@ -1,16 +1,11 @@
-# Oracle PostgreSQL target preparation.
-#
-# These resources are safe to deploy before cutover. They create or adopt the
-# durable OpenWebUI database and expose an unused in-cluster SSH tunnel, but do
-# not replace openwebui-db-url. OpenWebUI therefore remains on Yugabyte until a
-# later, explicit cutover change.
+# Durable Oracle PostgreSQL database and connectivity for OpenWebUI.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: openwebui-database-external-secrets
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-wave: "-4"
 ---
 apiVersion: batch/v1
 kind: Job
@@ -18,7 +13,7 @@ metadata:
   name: openwebui-postgres-bootstrap
   namespace: vault
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "-3"
     argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 2
@@ -83,6 +78,18 @@ spec:
               }
               path "secret/metadata/directus_db_ssh_private_key_b64" {
                 capabilities = ["read", "list"]
+              }
+              path "secret/data/keycloak-client-id-openwebui" {
+                capabilities = ["read"]
+              }
+              path "secret/data/keycloak-client-secret-openwebui" {
+                capabilities = ["read"]
+              }
+              path "secret/data/openwebui-webui-secret-key" {
+                capabilities = ["read"]
+              }
+              path "secret/data/open_ai_key" {
+                capabilities = ["read"]
               }
               EOF
 
@@ -165,7 +172,7 @@ metadata:
   name: openwebui-database-vault
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
   provider:
     vault:
@@ -185,7 +192,7 @@ metadata:
   name: openwebui-postgres-tunnel
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -210,13 +217,102 @@ spec:
         key: directus_db_ssh_private_key_b64
         property: value
 ---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openwebui-database
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: openwebui-database-vault
+  target:
+    name: openwebui-db-url
+    # Safely adopt a pre-existing Secret during rebuilds or controller recovery.
+    creationPolicy: Orphan
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+      data:
+        DATABASE_URL: "postgresql://openwebui_app:{{ .password }}@openwebui-postgres.ollama.svc.cluster.local:5432/openwebui?options=-csearch_path%3Dopenwebui"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: openwebui-db-password
+        property: value
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openwebui-oidc-secrets
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: openwebui-database-vault
+  target:
+    name: openwebui-oidc-secrets
+    creationPolicy: Orphan
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+      data:
+        OAUTH_CLIENT_ID: "{{ .clientId }}"
+        OAUTH_CLIENT_SECRET: "{{ .clientSecret }}"
+        WEBUI_SECRET_KEY: "{{ .webuiSecretKey }}"
+  data:
+    - secretKey: clientId
+      remoteRef:
+        key: keycloak-client-id-openwebui
+        property: value
+    - secretKey: clientSecret
+      remoteRef:
+        key: keycloak-client-secret-openwebui
+        property: value
+    - secretKey: webuiSecretKey
+      remoteRef:
+        key: openwebui-webui-secret-key
+        property: value
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openwebui-openai
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: openwebui-database-vault
+  target:
+    name: openwebui-openai
+    creationPolicy: Orphan
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+      data:
+        OPENAI_API_KEY: "{{ .apiKey }}"
+  data:
+    - secretKey: apiKey
+      remoteRef:
+        key: open_ai_key
+        property: value
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: openwebui-postgres
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   selector:
     app.kubernetes.io/name: openwebui-postgres-tunnel
@@ -231,7 +327,7 @@ metadata:
   name: openwebui-postgres-tunnel
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "0"
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 2
@@ -306,7 +402,7 @@ metadata:
   name: openwebui-postgres-tunnel
   namespace: ollama
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   minAvailable: 1
   selector:

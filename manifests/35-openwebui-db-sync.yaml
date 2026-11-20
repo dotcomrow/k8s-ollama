@@ -1,17 +1,14 @@
-# PASSWORD ROTATION CRONJOB (reads Vault static-creds, writes DATABASE_URL secret)
+# Runtime secret and CMS service-account reconciliation.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: sync-openwebui-db-secret
+  name: sync-openwebui-runtime-secrets
   namespace: ollama
   annotations:
     argocd.argoproj.io/sync-wave: "0"
     linkerd.io/inject: disabled
 spec:
   schedule: "0 0 * * *"
-  # Temporary migration maintenance state. This Yugabyte credential sync is
-  # removed entirely by the final Oracle PostgreSQL cutover commit.
-  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
@@ -67,36 +64,11 @@ spec:
                   fi
                   export VAULT_TOKEN
 
-                  while true; do
-                    CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
-                    if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
-                      USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
-                      PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
-                      echo "✅ Got static creds for user: $USERNAME"
-                      break
-                    fi
-                    echo "⚠️ Static creds not available yet. Retrying..."
-                    cat /tmp/vault_err.log || true
-                    sleep "$RETRY_INTERVAL"
-                  done
-
-                  USERNAME_ENC=$(printf '%s' "$USERNAME" | jq -sRr @uri)
-                  PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
-                  DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
-
-                  echo "🔐 Creating/updating Kubernetes secret openwebui-db-url..."
-                  cat <<EOF | kubectl apply -f -
-                  apiVersion: v1
-                  kind: Secret
-                  metadata:
-                    name: openwebui-db-url
-                    namespace: ollama
-                  type: Opaque
-                  stringData:
-                    DATABASE_URL: ${DB_URL}
-                  EOF
-
-                  echo "✅ DATABASE_URL updated."
+                  DB_URL="${DATABASE_URL:-}"
+                  if [ -z "$DB_URL" ]; then
+                    echo "❌ DATABASE_URL is unavailable" >&2
+                    exit 1
+                  fi
 
                   while true; do
                     OIDC_CLIENT_ID=$(vault kv get -field=value secret/keycloak-client-id-openwebui 2>/tmp/vault_err.log || true)
@@ -230,6 +202,12 @@ spec:
 
                   echo "✅ OpenAI secret updated."
 
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: openwebui-db-url
+                      key: DATABASE_URL
               volumeMounts:
                 - name: kubectl-bin
                   mountPath: /usr/local/bin

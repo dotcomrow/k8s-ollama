@@ -1,229 +1,3 @@
-# ONE-TIME DB + VAULT SETUP (owner + static role)
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: openwebui-yugabyte-config
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/sync-options: Replace=true,Force=true
-spec:
-  backoffLimit: 1
-  template:
-    metadata:
-      annotations:
-        linkerd.io/inject: disabled
-    spec:
-      restartPolicy: Never
-      serviceAccountName: default
-      volumes:
-        - name: root-token
-          secret:
-            secretName: vault-root-token
-      containers:
-        - name: setup-owner-and-static-rotation
-          image: hashicorp/vault:1.15.4
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              #!/bin/sh
-              # No 'set -euo pipefail' per preference
-              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
-              PGPORT=5433
-              MAINT_DB=yugabyte
-              DB=openwebui
-              OWNER_LOGIN=openwebui_login
-              VAULTADMIN_USER=vaultadmin
-
-              echo "🔧 Installing clients..."
-              apk add --no-cache bash curl postgresql15-client jq netcat-openbsd >/dev/null
-
-              export VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-
-              echo "🔑 Waiting for Vault token..."
-              while [ ! -f /vault-token/VAULT_TOKEN ] && [ ! -f /vault-token/token ]; do
-                sleep 2
-              done
-
-              if [ -f /vault-token/VAULT_TOKEN ]; then
-                export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-              else
-                export VAULT_TOKEN="$(cat /vault-token/token)"
-              fi
-
-              echo "🔎 Wait for DB endpoint..."
-              until getent hosts "$PGHOST" >/dev/null; do sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 3; done
-              echo "✅ Yugabyte reachable"
-
-              echo "🔐 Fetching vaultadmin password..."
-              while :; do
-                VAULTADMIN_PASS="$(vault kv get -field=value secret/$VAULTADMIN_USER 2>/dev/null || true)"
-                [ -n "$VAULTADMIN_PASS" ] && break
-                echo "⏳ Waiting for secret/$VAULTADMIN_USER ..."
-                sleep 3
-              done
-              export PGPASSWORD="$VAULTADMIN_PASS"
-              export PGDATABASE="$MAINT_DB"
-
-              create_db() {
-                if command -v createdb >/dev/null 2>&1; then
-                  createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB"
-                  return $?
-                fi
-                if ! command -v psql >/dev/null 2>&1; then
-                  echo "psql not found; cannot create database." >&2
-                  return 127
-                fi
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$MAINT_DB" \
-                  -c "CREATE DATABASE $DB OWNER $VAULTADMIN_USER;"
-              }
-
-              # Ensure database exists (owned by vaultadmin for now)
-              while :; do
-                DB_EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$MAINT_DB" -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/tmp/psql_err.log || true)
-                if [ "$DB_EXISTS" = "1" ]; then
-                  echo "✅ Database $DB exists"
-                  break
-                fi
-                echo "📦 Creating database $DB..."
-                if create_db 2>/tmp/createdb_err.log; then
-                  echo "✅ Created $DB"
-                  break
-                fi
-                echo "❌ Create DB failed (see /tmp/createdb_err.log):"
-                cat /tmp/createdb_err.log
-                echo "⏳ Retry create DB..."
-                sleep 3
-              done
-
-              # Create stable owner login if missing; allow vaultadmin to set OWNER to it
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$MAINT_DB" <<EOSQL
-              DO \$\$
-              BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_LOGIN') THEN
-                  CREATE ROLE $OWNER_LOGIN LOGIN;
-                END IF;
-              END
-              \$\$;
-              GRANT $OWNER_LOGIN TO $VAULTADMIN_USER;
-              EOSQL
-
-              # Ensure schema exists, reassign all objects to OWNER_LOGIN
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
-              -- ensure schema
-              CREATE SCHEMA IF NOT EXISTS openwebui;
-              ALTER SCHEMA openwebui OWNER TO $OWNER_LOGIN;
-              GRANT USAGE, CREATE ON SCHEMA openwebui TO $OWNER_LOGIN;
-              ALTER ROLE $OWNER_LOGIN SET search_path = openwebui, public;
-
-              -- reassign all existing tables
-              DO \$\$
-              DECLARE r RECORD;
-              BEGIN
-                FOR r IN
-                  SELECT format('%I.%I', schemaname, tablename) AS obj
-                  FROM pg_tables WHERE schemaname='openwebui'
-                LOOP
-                  EXECUTE format('ALTER TABLE %s OWNER TO openwebui_login', r.obj);
-                END LOOP;
-
-                -- sequences
-                FOR r IN
-                  SELECT format('%I.%I', sequence_schema, sequence_name) AS obj
-                  FROM information_schema.sequences WHERE sequence_schema='openwebui'
-                LOOP
-                  EXECUTE format('ALTER SEQUENCE %s OWNER TO openwebui_login', r.obj);
-                END LOOP;
-
-                -- views
-                FOR r IN
-                  SELECT format('%I.%I', table_schema, table_name) AS obj
-                  FROM information_schema.views WHERE table_schema='openwebui'
-                LOOP
-                  EXECUTE format('ALTER VIEW %s OWNER TO openwebui_login', r.obj);
-                END LOOP;
-              END\$\$;
-              EOSQL
-
-              echo "✅ Schema & object ownership set to $OWNER_LOGIN"
-
-              # Keep OpenWebUI on its own Vault database connection so another
-              # workload cannot remove openwebui-login by replacing the shared
-              # yugabyte connection's allowed_roles list.
-              echo "🔐 Configuring dedicated Vault database connection for OpenWebUI ..."
-              vault write yugabyte-db/config/openwebui \
-                plugin_name="postgresql-database-plugin" \
-                connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/${MAINT_DB}?sslmode=disable" \
-                username="${VAULTADMIN_USER}" \
-                password="${VAULTADMIN_PASS}" \
-                allowed_roles="openwebui-login" \
-                max_open_connections="40" \
-                max_idle_connections="0" \
-                max_connection_lifetime="0s"
-
-              # A static role cannot move between database connections in
-              # place. Recreate it only for the one-time migration from the
-              # shared connection; later syncs remain idempotent.
-              STATIC_ROLE_DB="$(vault read -field=db_name yugabyte-db/static-roles/openwebui-login 2>/dev/null || true)"
-              if [ -n "$STATIC_ROLE_DB" ] && [ "$STATIC_ROLE_DB" != "openwebui" ]; then
-                vault delete yugabyte-db/static-roles/openwebui-login >/dev/null
-              fi
-              echo "🔐 Configuring Vault static role for $OWNER_LOGIN ..."
-              cat <<'JSON' | vault write yugabyte-db/static-roles/openwebui-login - 
-              {
-                "db_name": "openwebui",
-                "username": "openwebui_login",
-                "rotation_statements": [
-                  "ALTER ROLE \"{{username}}\" WITH PASSWORD '{{password}}'"
-                ],
-                "rotation_period": "720h"
-              }
-              JSON
-
-              echo "📜 Writing policy to read static creds..."
-              vault policy write openwebui-login - <<EOF
-              path "yugabyte-db/static-creds/openwebui-login" {
-                capabilities = ["read"]
-              }
-              EOF
-
-              echo "🔗 Binding K8s SA 'openwebui' in ns 'ollama' ..."
-              vault write auth/kubernetes/role/openwebui-login \
-                bound_service_account_names="openwebui" \
-                bound_service_account_namespaces="ollama" \
-                policies="openwebui-login" \
-                ttl="48h"
-
-              echo "📜 Writing policy for ollama async ExternalSecret..."
-              vault policy write externalsecrets-ollama-async - <<'EOF'
-              path "secret/data/kafka-scram-user-ollama-async" { capabilities = ["read"] }
-              path "secret/metadata/kafka-scram-user-ollama-async" { capabilities = ["read", "list"] }
-              path "secret/data/kafka-scram-user-ollama-async-password" { capabilities = ["read"] }
-              path "secret/metadata/kafka-scram-user-ollama-async-password" { capabilities = ["read", "list"] }
-              path "secret/data/openwebui-cms-translation-token" { capabilities = ["read"] }
-              path "secret/metadata/openwebui-cms-translation-token" { capabilities = ["read", "list"] }
-              EOF
-
-              echo "🔗 Binding K8s SA 'ollama-async-external-secrets' in ns 'ollama' ..."
-              vault write auth/kubernetes/role/externalsecrets-ollama-async \
-                bound_service_account_names="ollama-async-external-secrets" \
-                bound_service_account_namespaces="ollama" \
-                policies="externalsecrets-ollama-async" \
-                ttl="48h"
-
-              echo "🧪 Verifying static creds issuance..."
-              if CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log)"; then
-                echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null \
-                  && echo "✅ Static creds OK" \
-                  || { echo "❌ Missing fields"; echo "$CREDS_JSON"; exit 1; }
-              else
-                echo "❌ Failed to read static creds"; cat /tmp/vault_err.log; exit 1
-              fi
-          volumeMounts:
-            - name: root-token
-              mountPath: /vault-token
-              readOnly: true
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -257,12 +31,12 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: openwebui-initial-secrets-sync
+  name: openwebui-runtime-secrets-reconcile
   namespace: ollama
   annotations:
-    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "3"
     linkerd.io/inject: disabled
 spec:
   backoffLimit: 1
@@ -315,36 +89,11 @@ spec:
               fi
               export VAULT_TOKEN
 
-              echo "⏳ Waiting for Vault static creds yugabyte-db/static-creds/openwebui-login ..."
-              while true; do
-                CREDS_JSON=$(vault read -format=json yugabyte-db/static-creds/openwebui-login 2>/tmp/vault_err.log || true)
-                if [ -n "$CREDS_JSON" ] && echo "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null; then
-                  USERNAME=$(echo "$CREDS_JSON" | jq -r '.data.username')
-                  PASSWORD=$(echo "$CREDS_JSON" | jq -r '.data.password')
-                  echo "✅ Got static creds for user: $USERNAME"
-                  break
-                fi
-                echo "⚠️ Static creds not available yet. Retrying..."
-                cat /tmp/vault_err.log || true
-                sleep "$RETRY_INTERVAL"
-              done
-
-              USERNAME_ENC=$(printf '%s' "$USERNAME" | jq -sRr @uri)
-              PASSWORD_ENC=$(printf '%s' "$PASSWORD" | jq -sRr @uri)
-              DB_URL="postgresql://${USERNAME_ENC}:${PASSWORD_ENC}@yb-tserver-service.yugabyte.svc.cluster.local:5433/openwebui?options=-csearch_path%3Dopenwebui"
-
-              echo "🔐 Creating/updating Kubernetes secret openwebui-db-url..."
-              cat <<EOF | kubectl apply -f -
-              apiVersion: v1
-              kind: Secret
-              metadata:
-                name: openwebui-db-url
-                namespace: ollama
-              type: Opaque
-              stringData:
-                DATABASE_URL: ${DB_URL}
-              EOF
-              echo "✅ DATABASE_URL created/updated."
+              DB_URL="${DATABASE_URL:-}"
+              if [ -z "$DB_URL" ]; then
+                echo "❌ DATABASE_URL is unavailable" >&2
+                exit 1
+              fi
 
               echo "⏳ Waiting for Keycloak client secrets in Vault..."
               while true; do
@@ -477,6 +226,12 @@ spec:
                 OPENAI_API_KEY: ${OPENAI_API_KEY}
               EOF
               echo "✅ OpenAI secret created/updated."
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-url
+                  key: DATABASE_URL
           volumeMounts:
             - name: kubectl-bin
               mountPath: /usr/local/bin

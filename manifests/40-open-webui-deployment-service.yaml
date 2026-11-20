@@ -9,16 +9,14 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
     platform.suncoast.systems/vpa-reconcile-at: "2026-11-09"
     reloader.stakater.com/auto: "true"
-    reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config,openwebui-sitecustomize"
+    reloader.stakater.com/configmap: "openwebui-oidc-config,openwebui-config"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets,openwebui-openai"
 spec:
   # Open WebUI schema migrations do not support old and new application
   # versions running against the database at the same time.
   strategy:
     type: Recreate
-  # Temporary migration maintenance state. Restored to one by the final
-  # Oracle PostgreSQL cutover commit.
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app: open-webui
@@ -103,7 +101,7 @@ spec:
                   return False
 
               def repair_known_partial_migrations(conn) -> None:
-                  # 856c5b02fb54 can partially apply on Postgres/Yugabyte: the column
+                  # 856c5b02fb54 can partially apply on PostgreSQL-compatible databases: the column
                   # exists, but alembic_version remains at the previous revision.
                   from sqlalchemy import text  # type: ignore
 
@@ -357,10 +355,6 @@ spec:
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
-            - name: openwebui-sitecustomize
-              mountPath: /usr/local/lib/python3.12/site-packages/sitecustomize.py
-              subPath: sitecustomize.py
-              readOnly: true
       containers:
         - name: open-webui
           image: *open_webui_image
@@ -448,7 +442,7 @@ spec:
               exec bash start.sh
           ports:
             - containerPort: 8080
-          # Self-heal when Open WebUI gets into a bad DB state (e.g., Yugabyte schema version mismatch):
+          # Self-heal when Open WebUI gets into a bad database state:
           # - Startup probe gates readiness/liveness until /api/config is healthy (avoids killing during cold start).
           # - Readiness removes the pod from Service when backend can’t serve.
           # - Liveness restarts the container if it stays unhealthy.
@@ -507,10 +501,6 @@ spec:
               readOnly: true
             - name: webui-data
               mountPath: /app/backend/data
-            - name: openwebui-sitecustomize
-              mountPath: /usr/local/lib/python3.12/site-packages/sitecustomize.py
-              subPath: sitecustomize.py
-              readOnly: true
       volumes:
         - name: openwebui-config
           configMap:
@@ -518,9 +508,6 @@ spec:
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
-        - name: openwebui-sitecustomize
-          configMap:
-            name: openwebui-sitecustomize
 ---
 apiVersion: v1
 kind: Service

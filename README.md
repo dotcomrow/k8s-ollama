@@ -23,9 +23,10 @@ configured models.
 
 ## Durable OpenWebUI PostgreSQL target
 
-`manifests/21-openwebui-postgres-target.yaml` prepares OpenWebUI's isolated
-database on the shared Oracle Cloud PostgreSQL server and provides a redundant
-in-cluster SSH tunnel. The target identity is:
+`manifests/21-openwebui-postgres-target.yaml` manages OpenWebUI's isolated
+database on the shared Oracle Cloud PostgreSQL server, a redundant in-cluster
+SSH tunnel, and the Vault-backed runtime connection Secret. The target identity
+is:
 
 - database: `openwebui`
 - schema: `openwebui`
@@ -46,6 +47,7 @@ contract: each value exists in Vault at `secret/<secret-name>` under the single
 - `directus_db_ssh_tunnel_host`
 - `directus_db_ssh_private_key_b64`
 
-The Oracle preparation resources do not replace `openwebui-db-url`. Until the
-explicit database cutover is committed, the running OpenWebUI deployment
-continues using its existing Yugabyte database.
+The generated `openwebui-db-url` Secret points OpenWebUI, its authentication
+bridge, and database reconciliation Jobs to the internal
+`openwebui-postgres.ollama.svc.cluster.local` tunnel Service. OpenWebUI's NFS
+model and cache volumes remain on the Kubernetes platform.
