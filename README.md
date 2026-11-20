@@ -35,7 +35,8 @@ The bootstrap creates the role, database, and schema only when they are absent.
 When the database already exists, it validates the expected database and schema
 owners and skips database and schema creation. An ownership mismatch fails the
 bootstrap instead of adopting or rebuilding unknown data. The bootstrap also
-checks that the Directus database identity is unchanged.
+restricts database connections to `openwebui_app` and checks that the Directus
+database identity is unchanged.
 
 Rebuild-critical values follow the Google Secret Manager synchronization
 contract: each value exists in Vault at `secret/<secret-name>` under the single

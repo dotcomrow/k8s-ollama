@@ -131,6 +131,7 @@ spec:
                 echo 'Existing OpenWebUI database detected; skipped database and schema creation'
               fi
 
+              sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c \"REVOKE CONNECT ON DATABASE \$db FROM PUBLIC; GRANT CONNECT ON DATABASE \$db TO \$role;\"
               test \"\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='\$db';\")\" = \"\$role\"
               directus_after=\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT oid::text || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname='directus';\")
               test \"\$directus_before\" = \"\$directus_after\"
