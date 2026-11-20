@@ -9,6 +9,9 @@ metadata:
     linkerd.io/inject: disabled
 spec:
   schedule: "0 0 * * *"
+  # Temporary migration maintenance state. This Yugabyte credential sync is
+  # removed entirely by the final Oracle PostgreSQL cutover commit.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3

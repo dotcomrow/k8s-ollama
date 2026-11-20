@@ -424,7 +424,9 @@ metadata:
     reloader.stakater.com/configmap: "openwebui-auth-bridge"
     reloader.stakater.com/secret: "openwebui-db-url,openwebui-oidc-secrets"
 spec:
-  replicas: 1
+  # Temporary migration maintenance state. Restored to one by the final
+  # Oracle PostgreSQL cutover commit.
+  replicas: 0
   selector:
     matchLabels:
       app: openwebui-auth-bridge

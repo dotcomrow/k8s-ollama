@@ -16,7 +16,9 @@ spec:
   # versions running against the database at the same time.
   strategy:
     type: Recreate
-  replicas: 1
+  # Temporary migration maintenance state. Restored to one by the final
+  # Oracle PostgreSQL cutover commit.
+  replicas: 0
   selector:
     matchLabels:
       app: open-webui
