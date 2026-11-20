@@ -20,3 +20,31 @@ An authenticated user must belong to at least one listed group. An empty list
 denies access. Application-specific APIs should still enforce their own group;
 this list controls only access to the shared Ollama/OpenWebUI service and its
 configured models.
+
+## Durable OpenWebUI PostgreSQL target
+
+`manifests/21-openwebui-postgres-target.yaml` prepares OpenWebUI's isolated
+database on the shared Oracle Cloud PostgreSQL server and provides a redundant
+in-cluster SSH tunnel. The target identity is:
+
+- database: `openwebui`
+- schema: `openwebui`
+- application role: `openwebui_app`
+
+The bootstrap creates the role, database, and schema only when they are absent.
+When the database already exists, it validates the expected database and schema
+owners and skips database and schema creation. An ownership mismatch fails the
+bootstrap instead of adopting or rebuilding unknown data. The bootstrap also
+checks that the Directus database identity is unchanged.
+
+Rebuild-critical values follow the Google Secret Manager synchronization
+contract: each value exists in Vault at `secret/<secret-name>` under the single
+`value` property. Required secret names are:
+
+- `openwebui-db-password`
+- `directus_db_ssh_tunnel_host`
+- `directus_db_ssh_private_key_b64`
+
+The Oracle preparation resources do not replace `openwebui-db-url`. Until the
+explicit database cutover is committed, the running OpenWebUI deployment
+continues using its existing Yugabyte database.

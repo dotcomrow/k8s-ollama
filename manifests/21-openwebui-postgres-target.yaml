@@ -1,0 +1,313 @@
+# Oracle PostgreSQL target preparation.
+#
+# These resources are safe to deploy before cutover. They create or adopt the
+# durable OpenWebUI database and expose an unused in-cluster SSH tunnel, but do
+# not replace openwebui-db-url. OpenWebUI therefore remains on Yugabyte until a
+# later, explicit cutover change.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openwebui-database-external-secrets
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openwebui-postgres-bootstrap
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openwebui-postgres-bootstrap
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: vault-root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: bootstrap
+          image: hashicorp/vault:1.15.4
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              apk add --no-cache openssh-client >/dev/null
+
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              if [ -f /vault-token/VAULT_TOKEN ]; then
+                export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+              elif [ -f /vault-token/token ]; then
+                export VAULT_TOKEN="$(cat /vault-token/token)"
+              else
+                echo "Vault root-token file is unavailable" >&2
+                exit 1
+              fi
+
+              db_password="$(vault kv get -field=value secret/openwebui-db-password)"
+              tunnel_host="$(vault kv get -field=value secret/directus_db_ssh_tunnel_host)"
+              tunnel_key_b64="$(vault kv get -field=value secret/directus_db_ssh_private_key_b64)"
+              test -n "$db_password"
+              test -n "$tunnel_host"
+              test -n "$tunnel_key_b64"
+
+              # The Google Secret Manager sync contract is one top-level Vault
+              # secret with one rebuild-safe field named value. Keep every
+              # durable dependency on that contract.
+              vault policy write openwebui-database - <<'EOF'
+              path "secret/data/openwebui-db-password" {
+                capabilities = ["read"]
+              }
+              path "secret/metadata/openwebui-db-password" {
+                capabilities = ["read", "list"]
+              }
+              path "secret/data/directus_db_ssh_tunnel_host" {
+                capabilities = ["read"]
+              }
+              path "secret/metadata/directus_db_ssh_tunnel_host" {
+                capabilities = ["read", "list"]
+              }
+              path "secret/data/directus_db_ssh_private_key_b64" {
+                capabilities = ["read"]
+              }
+              path "secret/metadata/directus_db_ssh_private_key_b64" {
+                capabilities = ["read", "list"]
+              }
+              EOF
+
+              vault write auth/kubernetes/role/openwebui-database \
+                bound_service_account_names="openwebui-database-external-secrets" \
+                bound_service_account_namespaces="ollama" \
+                policies="openwebui-database" \
+                ttl="48h" >/dev/null
+
+              umask 077
+              printf '%s' "$tunnel_key_b64" | base64 -d > /tmp/db-tunnel-key
+              db_password_b64="$(printf '%s' "$db_password" | base64 | tr -d '\n')"
+
+              remote_script="set -eu
+              db='openwebui'
+              role='openwebui_app'
+              schema='openwebui'
+              password=\$(printf '%s' '$db_password_b64' | base64 -d)
+              password_sql=\$(printf '%s' \"\$password\" | sed \"s/'/''/g\")
+
+              directus_before=\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT oid::text || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname='directus';\")
+              test -n \"\$directus_before\"
+
+              if sudo -n -u postgres psql -AtX -d postgres -c \"SELECT 1 FROM pg_roles WHERE rolname='\$role';\" | grep -qx 1; then
+                sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c \"ALTER ROLE \$role WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION CONNECTION LIMIT 20 PASSWORD '\$password_sql';\"
+              else
+                sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c \"CREATE ROLE \$role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION CONNECTION LIMIT 20 PASSWORD '\$password_sql';\"
+              fi
+              sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c \"ALTER ROLE \$role SET search_path TO openwebui, public; ALTER ROLE \$role SET statement_timeout='30s'; ALTER ROLE \$role SET lock_timeout='5s'; ALTER ROLE \$role SET idle_in_transaction_session_timeout='30s';\"
+
+              db_owner=\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='\$db';\")
+              if [ -z \"\$db_owner\" ]; then
+                sudo -n -u postgres createdb --owner=\"\$role\" --encoding=UTF8 --template=template0 \"\$db\"
+                sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d \"\$db\" -c \"REVOKE ALL ON SCHEMA public FROM PUBLIC; CREATE SCHEMA \$schema AUTHORIZATION \$role; REVOKE ALL ON SCHEMA \$schema FROM PUBLIC; GRANT USAGE, CREATE ON SCHEMA \$schema TO \$role;\"
+                echo 'Created isolated OpenWebUI database and schema'
+              else
+                if [ \"\$db_owner\" != \"\$role\" ]; then
+                  echo \"Existing \$db database is owned by unexpected role: \$db_owner\" >&2
+                  exit 1
+                fi
+                schema_owner=\$(sudo -n -u postgres psql -AtX -d \"\$db\" -c \"SELECT schema_owner FROM information_schema.schemata WHERE schema_name='\$schema';\")
+                if [ \"\$schema_owner\" != \"\$role\" ]; then
+                  echo \"Existing \$db database has missing or unexpectedly owned \$schema schema: \$schema_owner\" >&2
+                  exit 1
+                fi
+                echo 'Existing OpenWebUI database detected; skipped database and schema creation'
+              fi
+
+              test \"\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='\$db';\")\" = \"\$role\"
+              directus_after=\$(sudo -n -u postgres psql -AtX -d postgres -c \"SELECT oid::text || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname='directus';\")
+              test \"\$directus_before\" = \"\$directus_after\"
+              echo 'OpenWebUI target is ready; Directus database identity is unchanged'"
+
+              connected=false
+              for candidate in ubuntu opc; do
+                if ssh -i /tmp/db-tunnel-key -o IdentitiesOnly=yes -o BatchMode=yes \
+                  -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+                  -o UserKnownHostsFile=/tmp/known-hosts \
+                  "$candidate@$tunnel_host" "sudo -n -u postgres true" >/dev/null 2>&1; then
+                  ssh -i /tmp/db-tunnel-key -o IdentitiesOnly=yes -o BatchMode=yes \
+                    -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+                    -o UserKnownHostsFile=/tmp/known-hosts \
+                    "$candidate@$tunnel_host" "$remote_script"
+                  connected=true
+                  break
+                fi
+              done
+              test "$connected" = true
+          volumeMounts:
+            - name: vault-root-token
+              mountPath: /vault-token
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: openwebui-database-vault
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  provider:
+    vault:
+      server: http://vault.vault.svc.cluster.local:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: openwebui-database
+          serviceAccountRef:
+            name: openwebui-database-external-secrets
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openwebui-postgres-tunnel
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: openwebui-database-vault
+  target:
+    name: openwebui-postgres-tunnel
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+      mergePolicy: Merge
+      data:
+        user: ubuntu
+  data:
+    - secretKey: host
+      remoteRef:
+        key: directus_db_ssh_tunnel_host
+        property: value
+    - secretKey: private_key_b64
+      remoteRef:
+        key: directus_db_ssh_private_key_b64
+        property: value
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-postgres
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  selector:
+    app.kubernetes.io/name: openwebui-postgres-tunnel
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui-postgres-tunnel
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openwebui-postgres-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openwebui-postgres-tunnel
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      containers:
+        - name: tunnel
+          image: alpine:3.20
+          command: ["sh", "-ec"]
+          args:
+            - |
+              apk add --no-cache openssh-client >/dev/null
+              printf '%s' "$PRIVATE_KEY_B64" | base64 -d > /tmp/db-key
+              chmod 600 /tmp/db-key
+              exec ssh -NT -i /tmp/db-key -o IdentitiesOnly=yes -o BatchMode=yes \
+                -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+                -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new \
+                -o UserKnownHostsFile=/tmp/known-hosts \
+                -L 0.0.0.0:5432:127.0.0.1:5432 "$TUNNEL_USER@$TUNNEL_HOST"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: TUNNEL_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-postgres-tunnel
+                  key: host
+            - name: TUNNEL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-postgres-tunnel
+                  key: user
+            - name: PRIVATE_KEY_B64
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-postgres-tunnel
+                  key: private_key_b64
+          readinessProbe:
+            tcpSocket:
+              port: postgres
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            periodSeconds: 30
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: openwebui-postgres-tunnel
+  namespace: ollama
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openwebui-postgres-tunnel
