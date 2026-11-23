@@ -270,7 +270,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: db-compat
-          image: postgres:16-alpine
+          image: postgres:18.7-alpine
           command: ["sh","-c"]
           args:
             - |

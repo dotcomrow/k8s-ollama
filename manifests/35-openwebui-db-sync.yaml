@@ -242,7 +242,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: install-meta-trigger
-          image: postgres:16-alpine
+          image: postgres:18.7-alpine
           resources:
             requests:
               cpu: "50m"
@@ -341,7 +341,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: sync-model-params
-          image: postgres:16-alpine
+          image: postgres:18.7-alpine
           resources:
             requests:
               cpu: "50m"
