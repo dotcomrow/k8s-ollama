@@ -153,10 +153,11 @@ data:
         # that account by the stored OIDC subject before considering creation.
         cur.execute(
             '''SELECT id FROM "user"
-               WHERE oauth::jsonb -> 'oidc' ->> 'sub' = %s
+               WHERE oauth::jsonb -> 'keycloak' ->> 'suncoast_identity_id' = %s
+                  OR oauth::jsonb -> 'oidc' ->> 'sub' = %s
                   OR oauth::jsonb -> 'keycloak' ->> 'sub' = %s
                ORDER BY created_at ASC LIMIT 1''',
-            (sub, sub),
+            (sub, sub, sub),
         )
         existing = cur.fetchone()
         if existing is not None:
@@ -276,11 +277,12 @@ data:
             with conn.cursor() as cur:
                 cur.execute(
                     '''SELECT id FROM "user"
-                       WHERE oauth::jsonb -> 'oidc' ->> 'sub' = %s
+                       WHERE oauth::jsonb -> 'keycloak' ->> 'suncoast_identity_id' = %s
+                          OR oauth::jsonb -> 'oidc' ->> 'sub' = %s
                           OR oauth::jsonb -> 'keycloak' ->> 'sub' = %s
                           OR lower(email) = lower(%s)
                        ORDER BY created_at ASC LIMIT 1''',
-                    (sub, sub, email),
+                    (sub, sub, sub, email),
                 )
                 existing = cur.fetchone()
             if existing is not None:
@@ -335,10 +337,11 @@ data:
                 cur.execute(
                     '''SELECT u.id FROM "user" u JOIN auth a ON a.id = u.id
                        WHERE a.active = true
-                         AND (u.oauth::jsonb -> 'oidc' ->> 'sub' = %s
+                         AND (u.oauth::jsonb -> 'keycloak' ->> 'suncoast_identity_id' = %s
+                           OR u.oauth::jsonb -> 'oidc' ->> 'sub' = %s
                            OR u.oauth::jsonb -> 'keycloak' ->> 'sub' = %s)
                        ORDER BY u.created_at ASC LIMIT 1''',
-                    (user_id, user_id),
+                    (user_id, user_id, user_id),
                 )
                 existing = cur.fetchone()
                 if existing is None:
@@ -369,21 +372,30 @@ data:
             if isinstance(aud, str) and aud != audience:
                 raise HTTPException(status_code=401, detail="Requested audience not available")
 
-        sub = decoded.get("sub")
-        if not sub:
-            raise HTTPException(status_code=401, detail="Missing subject")
+        keycloak_sub = decoded.get("sub")
+        if not keycloak_sub:
+            raise HTTPException(status_code=401, detail="Missing token subject")
+        stable_subject = decoded.get("suncoast_identity_id")
+        if not isinstance(stable_subject, str) or not stable_subject.strip():
+            raise HTTPException(status_code=401, detail="Missing stable identity")
+        stable_subject = stable_subject.strip()
 
-        email = decoded.get("email") or decoded.get("preferred_username") or f"{sub}@idp.local"
+        email = decoded.get("email") or decoded.get("preferred_username") or f"{stable_subject}@idp.local"
         authorized = bool(ALLOWED_MEMBERSHIP_ROLES.intersection(membership_roles(decoded)))
         if not authorized:
-            revoke_existing_model_access(sub, email)
+            revoke_existing_model_access(stable_subject, email)
             raise HTTPException(status_code=403, detail="Approved application membership required")
         raw_username = decoded.get("preferred_username") or email
-        preferred_username = normalize_username(raw_username, sub)
+        preferred_username = normalize_username(raw_username, stable_subject)
         name = decoded.get("name") or raw_username or preferred_username
-        oauth = {"keycloak": {"sub": sub, "email": email, "preferred_username": raw_username}}
+        oauth = {"keycloak": {
+            "sub": keycloak_sub,
+            "suncoast_identity_id": stable_subject,
+            "email": email,
+            "preferred_username": raw_username,
+        }}
 
-        user_id = upsert_user(sub, email, name, preferred_username, oauth)
+        user_id = upsert_user(stable_subject, email, name, preferred_username, oauth)
         reconcile_model_access(user_id, True)
         token, ttl = mint_webui_token(user_id)
 
